@@ -1,0 +1,13 @@
+* {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  margin: 0 !important;
+  padding: 0 !important;
+  height: 100vh;
+  width: 100vw; /* 🚨 修正宽度 */
+  overflow: hidden;
+  background: #faf8f5;
+  font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+}
