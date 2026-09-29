@@ -1,4 +1,5 @@
 """检索服务：向量召回 + 父子块回表"""
+
 from sqlalchemy import text
 from app.database import SessionLocal
 from app.services.embedding import embed_texts
@@ -20,8 +21,16 @@ def vector_search(query: str, top_k: int = 50) -> list[dict]:
         sql += " ORDER BY c.embedding <=> :vec LIMIT :k"
         rows = db.execute(text(sql), params).fetchall()
         logger.info(f"向量召回 {len(rows)} 条")
-        return [{"chunk_id": str(r[0]), "parent_id": str(r[1]) if r[1] else None,
-                 "doc_id": str(r[2]), "content": r[3], "doc_title": r[4]} for r in rows]
+        return [
+            {
+                "chunk_id": str(r[0]),
+                "parent_id": str(r[1]) if r[1] else None,
+                "doc_id": str(r[2]),
+                "content": r[3],
+                "doc_title": r[4],
+            }
+            for r in rows
+        ]
     finally:
         db.close()
 
@@ -37,7 +46,7 @@ def fetch_parent_contents(chunks: list[dict]) -> list[dict]:
     try:
         rows = db.execute(
             text("SELECT id, content FROM chunks WHERE id = ANY(:ids)"),
-            {"ids": parent_ids}
+            {"ids": parent_ids},
         ).fetchall()
         parent_map = {str(r[0]): r[1] for r in rows}
 

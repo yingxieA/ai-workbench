@@ -1,0 +1,17 @@
+# ruff 配置（pre-commit 后端 Python 质量门）
+# 说明：
+#   - E712 全局忽略：SQLAlchemy filter(Model.is_deleted == False) 是列比较生成 SQL，
+#     ruff 建议的 `not Model.is_deleted` 是对 Python 对象取反，对 ORM 列不适用（误报）。
+#     后续如需严格化，可批量迁移为 .is_(False) 后再开启。
+#   - alembic/env.py E402：sys.path hack 必须出现在 import 之前，属 alembic 标准写法，特例豁免。
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+ignore = [
+    "E712",  # SQLAlchemy 列比较 == False/True 的合法用法（ruff 建议的 not 对 ORM 列不适用）
+]
+
+[tool.ruff.lint.per-file-ignores]
+"backend/alembic/env.py" = ["E402"]  # sys.path hack 需在 import 前执行

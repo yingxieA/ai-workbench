@@ -1,4 +1,5 @@
 """日报 API"""
+
 from fastapi import APIRouter, BackgroundTasks
 import httpx
 from app.services.news import generate_daily_news, get_today_news
@@ -14,10 +15,7 @@ router = APIRouter(prefix="/api/news", tags=["news"])
 _detail_cache = {}
 
 # GitHub 周榜缓存（内存缓存，每天更新一次）
-_trending_cache = {
-    "date": "",
-    "data": []
-}
+_trending_cache = {"date": "", "data": []}
 
 
 @router.get("/today")
@@ -35,7 +33,10 @@ async def generate(background_tasks: BackgroundTasks):
     task_id = str(uuid.uuid4())
     db = SessionLocal()
     try:
-        db.execute(text("INSERT INTO news_tasks (id, status) VALUES (:id, 'pending')"), {"id": task_id})
+        db.execute(
+            text("INSERT INTO news_tasks (id, status) VALUES (:id, 'pending')"),
+            {"id": task_id},
+        )
         db.commit()
     finally:
         db.close()
@@ -43,14 +44,23 @@ async def generate(background_tasks: BackgroundTasks):
     async def run_task():
         db2 = SessionLocal()
         try:
-            db2.execute(text("UPDATE news_tasks SET status='processing' WHERE id=:id"), {"id": task_id})
+            db2.execute(
+                text("UPDATE news_tasks SET status='processing' WHERE id=:id"),
+                {"id": task_id},
+            )
             db2.commit()
             summary = await generate_daily_news()
-            db2.execute(text("UPDATE news_tasks SET status='done', summary=:s WHERE id=:id"), {"s": summary, "id": task_id})
+            db2.execute(
+                text("UPDATE news_tasks SET status='done', summary=:s WHERE id=:id"),
+                {"s": summary, "id": task_id},
+            )
             db2.commit()
         except Exception as e:
             logger.error(f"日报任务失败: {e}")
-            db2.execute(text("UPDATE news_tasks SET status='failed', error=:e WHERE id=:id"), {"e": str(e), "id": task_id})
+            db2.execute(
+                text("UPDATE news_tasks SET status='failed', error=:e WHERE id=:id"),
+                {"e": str(e), "id": task_id},
+            )
             db2.commit()
         finally:
             db2.close()
@@ -63,11 +73,12 @@ async def generate(background_tasks: BackgroundTasks):
 def get_task(task_id: str):
     from sqlalchemy import text
     from app.database import SessionLocal
+
     db = SessionLocal()
     try:
         row = db.execute(
             text("SELECT status, summary, error FROM news_tasks WHERE id=:id"),
-            {"id": task_id}
+            {"id": task_id},
         ).fetchone()
         if not row:
             return {"status": "not_found"}
@@ -93,14 +104,14 @@ async def github_trending(refresh: bool = False):
                     "q": "topic:ai created:>2025-09-10",
                     "sort": "stars",
                     "order": "desc",
-                    "per_page": 10
+                    "per_page": 10,
                 },
-                headers={"Accept": "application/vnd.github.v3+json"}
+                headers={"Accept": "application/vnd.github.v3+json"},
             )
             data = resp.json()
             items = data.get("items", [])
             descs = [repo["description"] or "" for repo in items]
-            trans_prompt = f"把以下项目描述翻译成中文，每个一行：\n" + "\n".join(descs)
+            trans_prompt = "把以下项目描述翻译成中文，每个一行：\n" + "\n".join(descs)
             trans_result = ""
             for token in chat_stream(trans_prompt):
                 trans_result += token
@@ -108,14 +119,16 @@ async def github_trending(refresh: bool = False):
 
             result = []
             for i, repo in enumerate(items):
-                result.append({
-                    "name": repo["full_name"],
-                    "url": repo["html_url"],
-                    "description": trans_list[i] if i < len(trans_list) else (repo["description"] or ""),
-                    "stars": repo["stargazers_count"],
-                    "language": repo["language"] or "",
-                    "forks": repo["forks_count"]
-                })
+                result.append(
+                    {
+                        "name": repo["full_name"],
+                        "url": repo["html_url"],
+                        "description": trans_list[i] if i < len(trans_list) else (repo["description"] or ""),
+                        "stars": repo["stargazers_count"],
+                        "language": repo["language"] or "",
+                        "forks": repo["forks_count"],
+                    }
+                )
 
             # 2. 更新缓存
             _trending_cache["date"] = today
@@ -141,22 +154,24 @@ async def github_search(q: str, per_page: int = 10):
                     "q": f"{q} in:name",
                     "sort": "stars",
                     "order": "desc",
-                    "per_page": per_page
+                    "per_page": per_page,
                 },
-                headers={"Accept": "application/vnd.github.v3+json"}
+                headers={"Accept": "application/vnd.github.v3+json"},
             )
             data = resp.json()
             items = data.get("items", [])
             result = []
             for repo in items:
-                result.append({
-                    "name": repo["full_name"],
-                    "url": repo["html_url"],
-                    "description": repo["description"] or "",
-                    "stars": repo["stargazers_count"],
-                    "language": repo["language"] or "",
-                    "forks": repo["forks_count"]
-                })
+                result.append(
+                    {
+                        "name": repo["full_name"],
+                        "url": repo["html_url"],
+                        "description": repo["description"] or "",
+                        "stars": repo["stargazers_count"],
+                        "language": repo["language"] or "",
+                        "forks": repo["forks_count"],
+                    }
+                )
             return {"items": result}
     except Exception as e:
         logger.error(f"GitHub search 失败: {e}")
@@ -171,10 +186,7 @@ async def github_project_teardown(name: str):
 
     db = SessionLocal()
     try:
-        row = db.execute(
-            text("SELECT detail FROM github_teardowns WHERE name = :n"),
-            {"n": name}
-        ).fetchone()
+        row = db.execute(text("SELECT detail FROM github_teardowns WHERE name = :n"), {"n": name}).fetchone()
         if row:
             return {"teardown": row[0]}
     finally:
@@ -193,7 +205,7 @@ async def github_project_teardown(name: str):
                     if r.status_code == 200:
                         readme = r.text[:3000]
                         break
-                except:
+                except Exception:
                     pass
 
             prompt = f"""请深入分析这个 GitHub 项目：{name}
@@ -237,8 +249,10 @@ README：{readme}
             db = SessionLocal()
             try:
                 db.execute(
-                    text("INSERT INTO github_teardowns (name, detail) VALUES (:n, :d) ON CONFLICT (name) DO UPDATE SET detail = EXCLUDED.detail"),
-                    {"n": name, "d": result}
+                    text(
+                        "INSERT INTO github_teardowns (name, detail) VALUES (:n, :d) ON CONFLICT (name) DO UPDATE SET detail = EXCLUDED.detail"
+                    ),
+                    {"n": name, "d": result},
                 )
                 db.commit()
             finally:
@@ -258,10 +272,7 @@ async def github_project_detail(name: str):
     db = SessionLocal()
     try:
         # 1. 先查缓存
-        row = db.execute(
-            text("SELECT detail FROM github_projects WHERE name = :n"),
-            {"n": name}
-        ).fetchone()
+        row = db.execute(text("SELECT detail FROM github_projects WHERE name = :n"), {"n": name}).fetchone()
         if row:
             return {"detail": row[0]}
     finally:
@@ -284,7 +295,7 @@ async def github_project_detail(name: str):
                     if r.status_code == 200:
                         readme = r.text[:2000]
                         break
-                except:
+                except Exception:
                     pass
 
             prompt = f"""请基于以下 GitHub 项目信息，用中文介绍这个项目：{name}
@@ -317,8 +328,10 @@ README 内容：
             db = SessionLocal()
             try:
                 db.execute(
-                    text("INSERT INTO github_projects (name, detail) VALUES (:n, :d) ON CONFLICT (name) DO UPDATE SET detail = EXCLUDED.detail"),
-                    {"n": name, "d": result}
+                    text(
+                        "INSERT INTO github_projects (name, detail) VALUES (:n, :d) ON CONFLICT (name) DO UPDATE SET detail = EXCLUDED.detail"
+                    ),
+                    {"n": name, "d": result},
                 )
                 db.commit()
             finally:

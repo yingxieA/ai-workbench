@@ -1,8 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { fetchEventSource } from '@microsoft/fetch-event-source';
-import { Input, Button, message, Spin, Space, Tag } from 'antd';
+import { Input, Button, message, Spin, Space, Tag, Alert, Tooltip } from 'antd';
+import { CheckCircleOutlined, CloseCircleOutlined, ToolOutlined, WarningOutlined, SafetyCertificateOutlined, BulbOutlined, LoadingOutlined } from '@ant-design/icons';
 import MemoMessageBubble from '../components/MemoMessageBubble';
 import ChatInput from '../components/ChatInput';
+import { authHeaders, authFetch, refreshAccessToken, clearAuthAndNotify } from '../utils/api';
 
 const { TextArea } = Input;
 
@@ -11,10 +13,20 @@ function ChatPage({ t, messages, setMessages, sessionId, setSessionId, loadingSe
   const [loading, setLoading] = useState(false);
   const [chatTitle, setChatTitle] = useState('');
   const [activeTopic, setActiveTopic] = useState(0);
+  const [confirmCard, setConfirmCard] = useState(null); // 高风险工具人工确认卡
   const scrollRef = useRef(null);
   const abortRef = useRef(null);
   const firstQuestionRef = useRef('');
   const topicRefs = useRef([]);
+  // 用 ref 存 sessionId，避免闭包陷阱
+  const sessionIdRef = useRef(sessionId);
+  // 流式状态：answer / toolSteps / sources 跨 handleAsk 与 handleConfirm 共享
+  const streamStateRef = useRef({ answer: '', toolSteps: [], sources: [] });
+
+  // 同步 ref 和 state
+  useEffect(() => {
+    sessionIdRef.current = sessionId;
+  }, [sessionId]);
 
   // 安全保护：确保 messages 始终是数组
   const safeMessages = Array.isArray(messages) ? messages : [];
@@ -30,7 +42,7 @@ function ChatPage({ t, messages, setMessages, sessionId, setSessionId, loadingSe
       if (!scrollRef.current || topics.length === 0) return;
       const scrollTop = scrollRef.current.scrollTop;
       const viewH = scrollRef.current.clientHeight;
-      
+
       // 找到当前可见区域中间位置对应的话题
       let current = 0;
       topics.forEach((topic, idx) => {
@@ -46,7 +58,7 @@ function ChatPage({ t, messages, setMessages, sessionId, setSessionId, loadingSe
       });
       setActiveTopic(current);
     };
-    
+
     const container = scrollRef.current;
     if (container) {
       container.addEventListener('scroll', handleScroll);
@@ -78,9 +90,9 @@ function ChatPage({ t, messages, setMessages, sessionId, setSessionId, loadingSe
   const updateSessionTitle = async (sid, title) => {
     if (!sid || !title) return;
     try {
-      await fetch(`${import.meta.env.VITE_API_BASE}/api/chat/sessions/${sid}`, {
+      await authFetch(`${import.meta.env.VITE_API_BASE}/api/chat/sessions/${sid}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ title })
       });
       // 更新侧边栏会话列表
@@ -119,14 +131,18 @@ function ChatPage({ t, messages, setMessages, sessionId, setSessionId, loadingSe
     if (loading || !q.trim()) return;
     if (abortRef.current) { abortRef.current.abort(); abortRef.current = null; }
 
+    // 记录发请求前是不是新会话（sessionId 为 null 说明是新对话）
+    const isNewSession = !sessionIdRef.current;
+
     setQuestion('');
-    setMessages(prev => [...(Array.isArray(prev) ? prev : []), { role: 'user', content: q }, { role: 'assistant', content: '', sources: [] }]);
+    setMessages(prev => [...(Array.isArray(prev) ? prev : []), { role: 'user', content: q }, { role: 'assistant', content: '', sources: [], toolSteps: [] }]);
     setLoading(true);
+    setConfirmCard(null);
     const currentController = new AbortController();
     abortRef.current = currentController;
 
-    let answer = '';
-    let sources = [];
+    // 每次新提问重置流式状态（含工具过程）
+    streamStateRef.current = { answer: '', toolSteps: [], sources: [] };
     let rafId = null;
     let silenceTimer = null;
     const resetSilenceTimer = () => {
@@ -143,9 +159,10 @@ function ChatPage({ t, messages, setMessages, sessionId, setSessionId, loadingSe
 
     const render = () => {
       if (abortRef.current !== currentController) return;
+      const st = streamStateRef.current;
       setMessages(prev => {
         const arr = Array.isArray(prev) ? [...prev] : [];
-        arr[arr.length - 1] = { role: 'assistant', content: answer, sources };
+        arr[arr.length - 1] = { role: 'assistant', content: st.answer, sources: st.sources, toolSteps: [...st.toolSteps] };
         return arr;
       });
     };
@@ -157,24 +174,54 @@ function ChatPage({ t, messages, setMessages, sessionId, setSessionId, loadingSe
 
     await fetchEventSource(`${import.meta.env.VITE_API_BASE}/api/chat/stream`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question: q, session_id: sessionId }),
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ question: q, session_id: sessionIdRef.current }),
       signal: currentController.signal,
       onmessage(ev) {
         resetSilenceTimer();
         try {
           const data = JSON.parse(ev.data);
+          const st = streamStateRef.current;
           if (data.type === 'token') {
-            answer += data.content;
+            st.answer += data.content;
             scheduleRender();
           }
-          else if (data.type === 'context') sources = data.contexts || [];
+          else if (data.type === 'context') st.sources = data.contexts || [];
+          else if (data.type === 'thinking') {
+            st.toolSteps.push({ kind: 'thinking', tool: '思考', summary: data.content || '', error: null });
+            scheduleRender();
+          }
+          else if (data.type === 'tool_result') {
+            st.toolSteps.push({
+              tool: data.tool,
+              success: data.success,
+              summary: data.summary,
+              error: data.error,
+            });
+            scheduleRender();
+          }
+          else if (data.type === 'tool_confirm') {
+            // 高风险工具：弹出确认卡，等待用户在卡上确认/拒绝
+            setConfirmCard({
+              tool: data.tool,
+              args: data.args,
+              description: data.description,
+              risk_level: data.risk_level,
+            });
+          }
+          else if (data.type === 'error') {
+            message.error(data.error || '服务异常');
+          }
           else if (data.type === 'session') {
+            // 同步更新 ref 和 state
+            sessionIdRef.current = data.session_id;
             setSessionId(data.session_id);
-            // 首次对话，自动生成标题
-            const title = generateTitle(q);
-            setChatTitle(title);
-            updateSessionTitle(data.session_id, title);
+            // 只有新会话才生成标题，后续对话不更新标题
+            if (isNewSession) {
+              const title = generateTitle(q);
+              setChatTitle(title);
+              updateSessionTitle(data.session_id, title);
+            }
           }
         } catch (e) {}
       },
@@ -188,6 +235,20 @@ function ChatPage({ t, messages, setMessages, sessionId, setSessionId, loadingSe
       onerror(err) {
         if (abortRef.current !== currentController) throw err;
         clearTimeout(silenceTimer);
+        // 401：token 过期 → 静默续期后重发整个请求
+        if (err && err.status === 401) {
+          refreshAccessToken().then(ok => {
+            if (ok) {
+              setMessages(prev => (Array.isArray(prev) ? prev.slice(0, -1) : [])); // 去掉占位气泡
+              setLoading(false);
+              handleAsk(q); // 带新 token 重连
+            } else {
+              clearAuthAndNotify();
+              setLoading(false);
+            }
+          }).catch(() => { setLoading(false); });
+          return; // 不抛错，避免 fetchEventSource 自动重试
+        }
         console.error(err);
         if (rafId) cancelAnimationFrame(rafId);
         render();
@@ -218,6 +279,78 @@ function ChatPage({ t, messages, setMessages, sessionId, setSessionId, loadingSe
   const handleStop = () => {
     if (abortRef.current) { abortRef.current.abort(); abortRef.current = null; }
     setLoading(false);
+  };
+
+  // 高风险工具人工确认：批准/拒绝后从断点续流
+  const handleConfirm = async (approved) => {
+    const sid = sessionIdRef.current;
+    if (!sid || !confirmCard) return;
+    setConfirmCard(null);
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const st = streamStateRef.current;
+    let rafId2 = null;
+
+    const render2 = () => {
+      if (abortRef.current !== controller) return;
+      setMessages(prev => {
+        const arr = Array.isArray(prev) ? [...prev] : [];
+        const last = arr.length - 1;
+        if (last >= 0 && arr[last].role === 'assistant') {
+          arr[last] = { ...arr[last], content: st.answer, sources: st.sources, toolSteps: [...st.toolSteps] };
+        }
+        return arr;
+      });
+    };
+    const scheduleRender2 = () => {
+      if (rafId2) cancelAnimationFrame(rafId2);
+      rafId2 = requestAnimationFrame(render2);
+    };
+
+    try {
+      await fetchEventSource(`${import.meta.env.VITE_API_BASE}/api/chat/confirm`, {
+        method: 'POST',
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ session_id: sid, approved }),
+        signal: controller.signal,
+        onmessage(ev) {
+          try {
+            const data = JSON.parse(ev.data);
+            if (data.type === 'token') {
+              st.answer += data.content;
+              scheduleRender2();
+            } else if (data.type === 'thinking') {
+              st.toolSteps.push({ kind: 'thinking', tool: '思考', summary: data.content || '', error: null });
+              scheduleRender2();
+            } else if (data.type === 'tool_result') {
+              st.toolSteps.push({ tool: data.tool, success: data.success, summary: data.summary, error: data.error });
+              scheduleRender2();
+            } else if (data.type === 'context') {
+              st.sources = data.contexts || [];
+            } else if (data.type === 'error') {
+              message.error(data.error || '续流失败');
+              setLoading(false);
+            }
+          } catch (e) {}
+        },
+        onclose() {
+          if (abortRef.current !== controller) return;
+          if (rafId2) cancelAnimationFrame(rafId2);
+          render2();
+          setLoading(false);
+        },
+        onerror(err) {
+          if (abortRef.current !== controller) return;
+          console.error(err);
+          if (rafId2) cancelAnimationFrame(rafId2);
+          render2();
+          setLoading(false);
+        },
+      });
+    } catch (e) {
+      if (e.name !== 'AbortError') console.error(e);
+      setLoading(false);
+    }
   };
 
   return (
@@ -271,8 +404,76 @@ function ChatPage({ t, messages, setMessages, sessionId, setSessionId, loadingSe
             {safeMessages.map((m, i) => (
               <div key={i} ref={m.role === 'user' ? (el) => (topicRefs.current[i] = el) : null}>
                 <MemoMessageBubble m={m} onRegenerate={handleRegenerate} onFeedback={handleFeedback} index={i} isStreaming={loading && i === safeMessages.length - 1} />
+                {/* 工具过程展示（本次回答调用过工具时） */}
+                {m.role === 'assistant' && Array.isArray(m.toolSteps) && m.toolSteps.length > 0 && (
+                  <div style={{ maxWidth: 720, margin: '4px 0 12px 96px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {m.toolSteps.map((s, si) => {
+                      const isThinking = s.kind === 'thinking';
+                      const bg = isThinking ? 'rgba(139,92,246,0.07)' : (s.success ? 'rgba(22,163,74,0.06)' : 'rgba(239,68,68,0.06)');
+                      const bd = isThinking ? 'rgba(139,92,246,0.3)' : (s.success ? 'rgba(22,163,74,0.25)' : 'rgba(239,68,68,0.25)');
+                      return (
+                        <div key={si} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, background: bg, border: `1px solid ${bd}`, borderRadius: 10, padding: '8px 12px', fontSize: 13 }}>
+                          {isThinking
+                            ? <LoadingOutlined style={{ color: '#8b5cf6', marginTop: 3 }} />
+                            : (s.success ? <CheckCircleOutlined style={{ color: '#16a34a', marginTop: 3 }} /> : <CloseCircleOutlined style={{ color: '#ef4444', marginTop: 3 }} />)}
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ color: 'var(--text-primary)', fontWeight: 500, display: 'flex', alignItems: 'center', gap: 6 }}>
+                              {isThinking ? <><BulbOutlined /> 思考过程</> : <><ToolOutlined /> 工具 · {s.tool}</>}
+                              {!isThinking && (
+                                <Tag style={{ marginLeft: 4, fontSize: 11, lineHeight: '16px' }} color={s.success ? 'green' : 'red'}>
+                                  {s.success ? '成功' : '失败'}
+                                </Tag>
+                              )}
+                            </div>
+                            {s.error ? (
+                              <div style={{ color: '#ef4444', marginTop: 2, wordBreak: 'break-all' }}>{s.error}</div>
+                            ) : (
+                              <div style={{ color: 'var(--text-secondary)', marginTop: 2, wordBreak: 'break-all', whiteSpace: 'pre-wrap' }}>{s.summary}</div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             ))}
+          </div>
+        )}
+        {/* 高风险工具人工确认卡 */}
+        {confirmCard && (
+          <div style={{ maxWidth: 720, margin: '0 auto 12px', padding: '0 16px' }}>
+            <Alert
+              type="warning"
+              showIcon
+              icon={<SafetyCertificateOutlined />}
+              message={
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <WarningOutlined style={{ color: '#d97706' }} />
+                  <span>高风险工具确认：{confirmCard.tool}</span>
+                  <Tag color="orange" style={{ marginLeft: 4 }}>需人工确认</Tag>
+                </div>
+              }
+              description={
+                <div>
+                  <div style={{ marginBottom: 6, color: 'var(--text-secondary)' }}>{confirmCard.description}</div>
+                  {confirmCard.args && Object.keys(confirmCard.args).length > 0 && (
+                    <div style={{ marginBottom: 8 }}>
+                      <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 4 }}>参数预览</div>
+                      <pre style={{ margin: 0, padding: 8, background: 'var(--bg-secondary)', borderRadius: 8, fontSize: 12, overflowX: 'auto' }}>{JSON.stringify(confirmCard.args, null, 2)}</pre>
+                    </div>
+                  )}
+                  <Space>
+                    <Button type="primary" size="small" icon={<CheckCircleOutlined />} onClick={() => handleConfirm(true)}>
+                      批准执行
+                    </Button>
+                    <Button size="small" danger icon={<CloseCircleOutlined />} onClick={() => handleConfirm(false)}>
+                      拒绝
+                    </Button>
+                  </Space>
+                </div>
+              }
+            />
           </div>
         )}
         {loading && safeMessages.length > 0 && (

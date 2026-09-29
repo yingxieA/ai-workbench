@@ -5,6 +5,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import { MarkdownComponents } from './MarkdownComponents';
+import { authHeaders, authFetch } from '../utils/api';
 
 export function splitCommitted(text) {
   const fenceCount = (text.match(/```/g) || []).length;
@@ -74,13 +75,13 @@ const MemoMessageBubble = React.memo(({ m, onRegenerate, index, onFeedback, isSt
             <Button type="text" size="small" icon={<CopyOutlined />} onClick={() => { navigator.clipboard.writeText(m.content); message.success('已复制'); }} />
             <Button type="text" size="small" icon={<ReloadOutlined />} onClick={() => onRegenerate(index)} />
             <Button type="text" size="small" icon={<LikeOutlined />} style={{ color: m.feedback === 'like' ? '#52c41a' : undefined }} onClick={() => {
-              fetch(`${import.meta.env.VITE_API_BASE}/api/chat/messages/${m.id}/feedback`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'like' }) }).then(() => {
+              authFetch(`${import.meta.env.VITE_API_BASE}/api/chat/messages/${m.id}/feedback`, { method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify({ type: 'like' }) }).then(() => {
                 message.success('已点赞');
                 onFeedback(index, 'like');
               });
             }} />
             <Button type="text" size="small" icon={<DislikeOutlined />} style={{ color: m.feedback === 'dislike' ? '#ff4d4f' : undefined }} onClick={() => {
-              fetch(`${import.meta.env.VITE_API_BASE}/api/chat/messages/${m.id}/feedback`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'dislike' }) }).then(() => {
+              authFetch(`${import.meta.env.VITE_API_BASE}/api/chat/messages/${m.id}/feedback`, { method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify({ type: 'dislike' }) }).then(() => {
                 message.info('已点踩');
                 onFeedback(index, 'dislike');
               });

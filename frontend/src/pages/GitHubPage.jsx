@@ -4,6 +4,7 @@ import { LinkOutlined, FileTextOutlined, RobotOutlined } from '@ant-design/icons
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { MarkdownComponents } from '../components/MarkdownComponents';
+import { authFetch } from '../utils/api';
 
 function GitHubPage({ t }) {
   const [trending, setTrending] = useState([]);
@@ -22,10 +23,10 @@ function GitHubPage({ t }) {
   const loadTrending = async (forceRefresh = false) => {
     setLoading(true);
     try {
-      const url = forceRefresh 
+      const url = forceRefresh
         ? `${import.meta.env.VITE_API_BASE}/api/news/github-trending?refresh=true`
         : `${import.meta.env.VITE_API_BASE}/api/news/github-trending`;
-      const res = await fetch(url);
+      const res = await authFetch(url);
       const data = await res.json();
       setTrending(data.items || []);
     } catch (e) {
@@ -38,7 +39,7 @@ function GitHubPage({ t }) {
   const handleSearch = async (value) => {
     if (!value.trim()) return;
     setLoading(true); setSearchKeyword(value); setIsSearching(true);
-    const res = await fetch(`${import.meta.env.VITE_API_BASE}/api/news/github-search?q=${value}`);
+    const res = await authFetch(`${import.meta.env.VITE_API_BASE}/api/news/github-search?q=${value}`);
     const data = await res.json();
     setTrending(data.items || []); setLoading(false);
   };
@@ -50,14 +51,14 @@ function GitHubPage({ t }) {
 
   const showDetail = async (item) => {
     setDetailModal({ open: true, loading: true, content: '', name: item.name });
-    const res = await fetch(`${import.meta.env.VITE_API_BASE}/api/news/github-project-detail?name=${item.name}`);
+    const res = await authFetch(`${import.meta.env.VITE_API_BASE}/api/news/github-project-detail?name=${item.name}`);
     const data = await res.json();
     setDetailModal({ open: true, loading: false, content: data.detail, name: item.name });
   };
 
   const showTeardown = async (item) => {
     setTeardownDrawer({ open: true, loading: true, content: '', name: item.name });
-    const res = await fetch(`${import.meta.env.VITE_API_BASE}/api/news/github-project-teardown?name=${item.name}`);
+    const res = await authFetch(`${import.meta.env.VITE_API_BASE}/api/news/github-project-teardown?name=${item.name}`);
     const data = await res.json();
     setTeardownDrawer({ open: true, loading: false, content: data.teardown, name: item.name });
   };
@@ -96,15 +97,15 @@ function GitHubPage({ t }) {
               { bg: '#9CA3AF', text: '#fff' },   // 第2名 银色
               { bg: '#B45309', text: '#fff' },   // 第3名 铜色
             ];
-            const rankStyle = i < 3 
+            const rankStyle = i < 3
               ? { background: rankColors[i].bg, color: rankColors[i].text }
               : { background: '#F3F4F6', color: '#4B5563' };
 
             return (
-              <div key={i} className="github-card" style={{ 
-                padding: 16, 
-                marginBottom: 12, 
-                borderRadius: 8, 
+              <div key={i} className="github-card" style={{
+                padding: 16,
+                marginBottom: 12,
+                borderRadius: 8,
                 border: '1px solid #E5E7EB',
                 transition: 'all 0.2s ease',
               }}
@@ -136,9 +137,9 @@ function GitHubPage({ t }) {
                       {i + 1}
                     </div>
                     {/* 项目名 */}
-                    <a href={item.url} target="_blank" rel="noreferrer" style={{ 
-                      color: '#111827', 
-                      fontWeight: 600, 
+                    <a href={item.url} target="_blank" rel="noreferrer" style={{
+                      color: '#111827',
+                      fontWeight: 600,
                       fontSize: 15,
                       textDecoration: 'none',
                     }}>
@@ -146,9 +147,9 @@ function GitHubPage({ t }) {
                     </a>
                     {/* 语言标签 */}
                     {item.language && (
-                      <Tag style={{ 
-                        background: '#F3F4F6', 
-                        border: 'none', 
+                      <Tag style={{
+                        background: '#F3F4F6',
+                        border: 'none',
                         color: '#4B5563',
                         fontSize: 12,
                         margin: 0,
@@ -171,10 +172,10 @@ function GitHubPage({ t }) {
                 </div>
 
                 {/* 第二行：项目描述 */}
-                <p style={{ 
-                  margin: '0 0 12px 0', 
-                  color: '#4B5563', 
-                  fontSize: 13, 
+                <p style={{
+                  margin: '0 0 12px 0',
+                  color: '#4B5563',
+                  fontSize: 13,
                   lineHeight: 1.6,
                   display: '-webkit-box',
                   WebkitLineClamp: 2,
@@ -187,9 +188,9 @@ function GitHubPage({ t }) {
                 {/* 第三行：操作按钮 */}
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 16 }}>
                   <Tooltip title="访问 GitHub 仓库">
-                    <Button 
-                      type="text" 
-                      size="small" 
+                    <Button
+                      type="text"
+                      size="small"
                       icon={<LinkOutlined />}
                       href={item.url}
                       target="_blank"
@@ -199,9 +200,9 @@ function GitHubPage({ t }) {
                     </Button>
                   </Tooltip>
                   <Tooltip title="查看项目详细介绍">
-                    <Button 
-                      type="text" 
-                      size="small" 
+                    <Button
+                      type="text"
+                      size="small"
                       icon={<FileTextOutlined />}
                       onClick={() => showDetail(item)}
                       style={{ color: '#4D6BFE', fontSize: 13 }}
@@ -210,9 +211,9 @@ function GitHubPage({ t }) {
                     </Button>
                   </Tooltip>
                   <Tooltip title="AI 拆解学习路线">
-                    <Button 
-                      type="text" 
-                      size="small" 
+                    <Button
+                      type="text"
+                      size="small"
                       icon={<RobotOutlined />}
                       onClick={() => showTeardown(item)}
                       style={{ color: '#4D6BFE', fontSize: 13 }}

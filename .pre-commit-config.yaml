@@ -1,0 +1,36 @@
+# pre-commit 配置：提交前统一执行代码质量检查
+# 安装:  pip install pre-commit && pre-commit install
+# 手动全量检查:  pre-commit run --all-files
+# 说明: 后端 Python 用 ruff(lint+format)；前端暂无 eslint/prettier 配置，后续接入后再加 hook
+repos:
+  # 通用基础检查（格式边界 / 安全 / 冲突）
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        # 去掉行尾空格（不改变 CRLF 行尾）
+      - id: end-of-file-fixer
+        # 文件末尾确保单个换行
+      - id: check-yaml
+        # YAML 语法（docker-compose.yml 等）
+      - id: check-json
+        # JSON 语法（dataset.json / package-lock.json 等）
+      - id: check-toml
+        # TOML 语法
+      - id: check-merge-conflict
+        # 禁止提交未解决的冲突标记 <<<<<<< =======
+      - id: detect-private-key
+        # 防止私钥误提交
+      - id: check-added-large-files
+        args: ["--maxkb=2048"]
+        # 新增大文件（>2MB）警告
+
+  # 后端 Python：lint + 自动修复 + 格式化（black 同风格）
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.9.10
+    hooks:
+      - id: ruff
+        args: [--fix]
+        # 默认规则集 F + E4/E7/E9；--fix 自动修复可修复问题
+      - id: ruff-format
+        # 格式化：与 black 兼容，统一代码风格

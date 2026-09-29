@@ -3,6 +3,7 @@ import { Button, Space, message } from 'antd';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { MarkdownComponents } from '../components/MarkdownComponents';
+import { authFetch } from '../utils/api';
 
 function cleanMarkdown(text) {
   if (!text) return '';
@@ -18,17 +19,17 @@ function NewsPage({ t }) {
   const [readDone, setReadDone] = useState(localStorage.getItem('news_read_' + new Date().toISOString().slice(0, 10)) === '1');
 
   useEffect(() => {
-    fetch(`${import.meta.env.VITE_API_BASE}/api/news/today`).then(r => r.json()).then(d => setSummary(d.summary));
+    authFetch(`${import.meta.env.VITE_API_BASE}/api/news/today`).then(r => r.json()).then(d => setSummary(d.summary));
   }, []);
 
   const handleGenerate = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_BASE}/api/news/generate`, { method: 'POST' });
+      const res = await authFetch(`${import.meta.env.VITE_API_BASE}/api/news/generate`, { method: 'POST' });
       const data = await res.json();
       if (!data.task_id) throw new Error('任务创建失败');
       const poll = setInterval(async () => {
-        const r = await fetch(`${import.meta.env.VITE_API_BASE}/api/news/task/${data.task_id}`);
+        const r = await authFetch(`${import.meta.env.VITE_API_BASE}/api/news/task/${data.task_id}`);
         const t = await r.json();
         if (t.status === 'done') {
           clearInterval(poll); setSummary(t.summary); setLoading(false); message.success('日报生成完成！');

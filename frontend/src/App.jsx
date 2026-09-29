@@ -4,9 +4,10 @@ import {
   MenuFoldOutlined, MenuUnfoldOutlined, PlusOutlined,
   HomeOutlined, MessageOutlined, NotificationOutlined,
   GithubOutlined, BulbOutlined, RocketOutlined,
-  UserOutlined, LogoutOutlined, FileTextOutlined, MoreOutlined
+  UserOutlined, LogoutOutlined, FileTextOutlined, MoreOutlined, EnvironmentOutlined, AuditOutlined, AppstoreOutlined,
+  DatabaseOutlined, BarChartOutlined
 } from '@ant-design/icons';
-import { BrowserRouter, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import useAppStore from './store/useAppStore';
 import ChatPage from './pages/ChatPage';
 import DashboardPage from './pages/DashboardPage';
@@ -15,12 +16,21 @@ import DocsPage from './pages/DocsPage';
 import SkillsPage from './pages/SkillsPage';
 import LearningPage from './pages/LearningPage';
 import GitHubPage from './pages/GitHubPage';
+import TravelPage from './pages/TravelPage';
+import UsersPage from './pages/UsersPage';
+import AuditPage from './pages/AuditPage';
+import MemoryPage from './pages/MemoryPage';
+import QualityCenterPage from './pages/QualityCenterPage';
+import ToolsPage from './pages/ToolsPage';
+import IntentRulesPage from './pages/IntentRulesPage';
+import { authHeaders, authFetch } from './utils/api';
 import './App.css';
 
 const i18n = {
   zh: {
     'nav.dashboard': '工作台总览', 'nav.chat': '智能问答', 'nav.news': 'AI 日报', 'nav.github': 'GitHub 周榜',
-    'nav.skills': '技能管理', 'nav.learning': '学习路径', 'nav.docs': '文档管理',
+    'nav.skills': '技能管理', 'nav.learning': '学习路径', 'nav.docs': '文档管理', 'nav.travel': '旅游规划',
+    'nav.users': '用户管理', 'nav.audit': '审计日志', 'nav.tools': '工具管理', 'nav.intents': '固定话术', 'nav.memories': '记忆管理', 'nav.quality': '质量中心',
     'app.title': 'AI 工作台', 'app.subtitle': '学习 · 问答 · 资讯',
     'chat.placeholder': '输入问题，回车发送', 'chat.send': '发送', 'chat.title': '智能问答',
     'chat.empty': '开始对话吧', 'chat.thinking': '思考中...',
@@ -31,6 +41,7 @@ const i18n = {
   en: {
     'nav.dashboard': 'Dashboard', 'nav.chat': 'Chat', 'nav.news': 'AI News', 'nav.github': 'GitHub Trending',
     'nav.skills': 'Skills', 'nav.learning': 'Learning Path', 'nav.docs': 'Documents',
+    'nav.users': 'Users', 'nav.audit': 'Audit Logs', 'nav.tools': 'Tools', 'nav.intents': 'Intent Rules', 'nav.memories': 'Memories', 'nav.quality': 'Quality Center',
     'app.title': 'AI Workbench', 'app.subtitle': 'Learn · Chat · News',
     'chat.placeholder': 'Type your question...', 'chat.send': 'Send', 'chat.title': 'AI Chat',
     'chat.empty': 'Start a conversation', 'chat.thinking': 'Thinking...',
@@ -42,7 +53,10 @@ const i18n = {
 
 function LoginPage() {
   const { setToken, setUser } = useAppStore();
+  const navigate = useNavigate();
+  const [mode, setMode] = useState('login'); // login | register
   const [loginForm, setLoginForm] = useState({ username: '', password: '' });
+  const [regForm, setRegForm] = useState({ username: '', password: '', nickname: '', email: '' });
   const [loading, setLoading] = useState(false);
 
   const handleLogin = async () => {
@@ -60,8 +74,11 @@ function LoginPage() {
       const data = await res.json();
       if (data.token) {
         setToken(data.token);
+        localStorage.setItem('refresh_token', data.refresh_token || '');
+        localStorage.setItem('user', JSON.stringify(data.user || {}));
         setUser(data.user);
         message.success('登录成功');
+        navigate('/chat');
       } else {
         message.error(data.detail || '登录失败');
       }
@@ -71,36 +88,118 @@ function LoginPage() {
     setLoading(false);
   };
 
+  const handleRegister = async () => {
+    if (!regForm.username || !regForm.password) {
+      message.error('请输入用户名和密码');
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await fetch(`${import.meta.env.VITE_API_BASE}/api/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(regForm)
+      });
+      const data = await res.json();
+      if (data.token) {
+        setToken(data.token);
+        localStorage.setItem('refresh_token', data.refresh_token || '');
+        localStorage.setItem('user', JSON.stringify(data.user || {}));
+        setUser(data.user);
+        message.success('注册成功，已自动登录');
+        navigate('/chat');
+      } else {
+        message.error(data.detail || '注册失败');
+      }
+    } catch (e) {
+      message.error('注册失败：' + e.message);
+    }
+    setLoading(false);
+  };
+
   return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-primary)' }}>
       <div style={{ width: 360, padding: 40, background: 'var(--bg-secondary)', borderRadius: 16, boxShadow: 'var(--input-shadow)' }}>
-        <div style={{ textAlign: 'center', marginBottom: 32 }}>
+        <div style={{ textAlign: 'center', marginBottom: 24 }}>
           <div style={{ width: 48, height: 48, borderRadius: 12, background: 'var(--accent-color)', color: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, fontWeight: 700, marginBottom: 12 }}>AW</div>
           <h2 style={{ margin: 0, fontSize: 20, color: 'var(--text-primary)' }}>AI 工作台</h2>
-          <p style={{ margin: '8px 0 0', fontSize: 13, color: 'var(--text-tertiary)' }}>请登录后使用</p>
+          <p style={{ margin: '8px 0 0', fontSize: 13, color: 'var(--text-tertiary)' }}>{mode === 'login' ? '请登录后使用' : '注册新账号'}</p>
         </div>
-        <Input
-          placeholder="用户名"
-          value={loginForm.username}
-          onChange={e => setLoginForm({ ...loginForm, username: e.target.value })}
-          style={{ marginBottom: 12, borderRadius: 8, background: 'var(--bg-primary)', color: 'var(--text-primary)' }}
-        />
-        <Input.Password
-          placeholder="密码"
-          value={loginForm.password}
-          onChange={e => setLoginForm({ ...loginForm, password: e.target.value })}
-          onPressEnter={handleLogin}
-          style={{ marginBottom: 20, borderRadius: 8, background: 'var(--bg-primary)', color: 'var(--text-primary)' }}
-        />
-        <Button
-          type="primary"
-          block
-          loading={loading}
-          onClick={handleLogin}
-          style={{ background: 'var(--accent-color)', borderColor: 'var(--accent-color)', borderRadius: 8, height: 40 }}
-        >
-          登录
-        </Button>
+        {mode === 'login' ? (
+          <>
+            <Input
+              placeholder="用户名"
+              value={loginForm.username}
+              onChange={e => setLoginForm({ ...loginForm, username: e.target.value })}
+              autoComplete="off"
+              style={{ marginBottom: 12, borderRadius: 8, background: 'var(--bg-primary)', color: 'var(--text-primary)' }}
+            />
+            <Input.Password
+              placeholder="密码"
+              value={loginForm.password}
+              onChange={e => setLoginForm({ ...loginForm, password: e.target.value })}
+              onPressEnter={handleLogin}
+              autoComplete="new-password"
+              style={{ marginBottom: 20, borderRadius: 8, background: 'var(--bg-primary)', color: 'var(--text-primary)' }}
+            />
+            <Button
+              type="primary"
+              block
+              loading={loading}
+              onClick={handleLogin}
+              style={{ background: 'var(--accent-color)', borderColor: 'var(--accent-color)', borderRadius: 8, height: 40 }}
+            >
+              登录
+            </Button>
+            <div style={{ textAlign: 'center', marginTop: 16 }}>
+              <Button type="link" onClick={() => setMode('register')}>没有账号？注册</Button>
+            </div>
+          </>
+        ) : (
+          <>
+            <Input
+              placeholder="用户名（3-20 字符）"
+              value={regForm.username}
+              onChange={e => setRegForm({ ...regForm, username: e.target.value })}
+              autoComplete="off"
+              style={{ marginBottom: 12, borderRadius: 8, background: 'var(--bg-primary)', color: 'var(--text-primary)' }}
+            />
+            <Input.Password
+              placeholder="密码（至少 8 位，含字母和数字）"
+              value={regForm.password}
+              onChange={e => setRegForm({ ...regForm, password: e.target.value })}
+              autoComplete="new-password"
+              style={{ marginBottom: 12, borderRadius: 8, background: 'var(--bg-primary)', color: 'var(--text-primary)' }}
+            />
+            <Input
+              placeholder="昵称（可选）"
+              value={regForm.nickname}
+              onChange={e => setRegForm({ ...regForm, nickname: e.target.value })}
+              autoComplete="off"
+              style={{ marginBottom: 12, borderRadius: 8, background: 'var(--bg-primary)', color: 'var(--text-primary)' }}
+            />
+            <Input
+              placeholder="邮箱（可选）"
+              value={regForm.email}
+              onChange={e => setRegForm({ ...regForm, email: e.target.value })}
+              onPressEnter={handleRegister}
+              autoComplete="off"
+              style={{ marginBottom: 20, borderRadius: 8, background: 'var(--bg-primary)', color: 'var(--text-primary)' }}
+            />
+            <Button
+              type="primary"
+              block
+              loading={loading}
+              onClick={handleRegister}
+              style={{ background: 'var(--accent-color)', borderColor: 'var(--accent-color)', borderRadius: 8, height: 40 }}
+            >
+              注册并登录
+            </Button>
+            <div style={{ textAlign: 'center', marginTop: 16 }}>
+              <Button type="link" onClick={() => setMode('login')}>已有账号？去登录</Button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
@@ -118,9 +217,26 @@ function App() {
 
   useEffect(() => {
     if (token) {
-      fetch(`${import.meta.env.VITE_API_BASE}/api/chat/sessions`).then(r => r.json()).then(setSessionsList).catch(() => {});
+      authFetch(`${import.meta.env.VITE_API_BASE}/api/chat/sessions`).then(r => r.json()).then(setSessionsList).catch(() => {});
+      // 刷新用户信息（确保 role_level/is_admin 最新，兼容旧 localStorage 缓存）
+      authFetch(`${import.meta.env.VITE_API_BASE}/api/auth/me`)
+        .then(r => r.json())
+        .then(data => {
+          if (data && data.id) {
+            setUser(data);
+            localStorage.setItem('user', JSON.stringify(data));
+          }
+        })
+        .catch(() => {});
     }
   }, [token]);
+
+  // 监听 auth-expired：refresh 失败时清登录态回登录页
+  useEffect(() => {
+    const onExpired = () => { setToken(null); setUser(null); };
+    window.addEventListener('auth-expired', onExpired);
+    return () => window.removeEventListener('auth-expired', onExpired);
+  }, []);
 
   useEffect(() => {
     document.body.className = theme === 'dark' ? 'dark' : '';
@@ -140,7 +256,7 @@ function App() {
   const loadSession = async (sid) => {
     setLoadingSession(true);
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_BASE}/api/chat/sessions/${sid}/messages`);
+      const res = await authFetch(`${import.meta.env.VITE_API_BASE}/api/chat/sessions/${sid}/messages`);
       const data = await res.json();
       // 兼容后端返回数组或 { messages: [...] } 两种格式
       const msgs = Array.isArray(data) ? data : (data.messages || []);
@@ -160,6 +276,8 @@ function App() {
     return <LoginPage />;
   }
 
+  const isAdmin = !!(user?.is_admin || (user?.role_level ?? 0) >= 100);
+
   const navItems = [
     { key: 'dashboard', icon: <HomeOutlined />, label: t('nav.dashboard') },
     { key: 'chat', icon: <MessageOutlined />, label: t('nav.chat') },
@@ -167,7 +285,17 @@ function App() {
     { key: 'github', icon: <GithubOutlined />, label: t('nav.github') },
     { key: 'skills', icon: <BulbOutlined />, label: t('nav.skills') },
     { key: 'learning', icon: <RocketOutlined />, label: t('nav.learning') },
-    { key: 'docs', icon: <FileTextOutlined />, label: t('nav.docs') },
+    { key: 'travel', icon: <EnvironmentOutlined />, label: t('nav.travel') },
+    // 管理后台（文档管理 / 用户管理 / 审计日志 / 工具管理）仅 admin 可见
+    ...(isAdmin ? [
+      { key: 'docs', icon: <FileTextOutlined />, label: t('nav.docs') },
+      { key: 'users', icon: <UserOutlined />, label: t('nav.users') },
+      { key: 'audit', icon: <AuditOutlined />, label: t('nav.audit') },
+      { key: 'tools', icon: <AppstoreOutlined />, label: t('nav.tools') },
+      { key: 'intents', icon: <MessageOutlined />, label: t('nav.intents') },
+      { key: 'memories', icon: <DatabaseOutlined />, label: t('nav.memories') },
+      { key: 'quality', icon: <BarChartOutlined />, label: t('nav.quality') },
+    ] : []),
   ];
 
   const isChatPage = page === 'chat';
@@ -218,12 +346,12 @@ function App() {
                   {editingId === s.id ? (
                     <Input size="small" value={editingValue} onChange={e => setEditingValue(e.target.value)} autoFocus onFocus={e => e.target.select()}
                       onPressEnter={async () => {
-                        await fetch(`${import.meta.env.VITE_API_BASE}/api/chat/sessions/${s.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: editingValue }) });
+                        await authFetch(`${import.meta.env.VITE_API_BASE}/api/chat/sessions/${s.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: editingValue }) });
                         setSessionsList(sessionsList.map(x => x.id === s.id ? { ...x, title: editingValue } : x));
                         setEditingId(null);
                       }}
                       onBlur={async () => {
-                        await fetch(`${import.meta.env.VITE_API_BASE}/api/chat/sessions/${s.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: editingValue }) });
+                        await authFetch(`${import.meta.env.VITE_API_BASE}/api/chat/sessions/${s.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: editingValue }) });
                         setSessionsList(sessionsList.map(x => x.id === s.id ? { ...x, title: editingValue } : x));
                         setEditingId(null);
                       }}
@@ -237,7 +365,7 @@ function App() {
                     items: [
                       { key: 'rename', label: '重命名', onClick: () => { setEditingId(s.id); setEditingValue(s.title); } },
                       { key: 'delete', label: <Popconfirm title="确定要删除这条对话吗？" okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={async () => {
-                        await fetch(`${import.meta.env.VITE_API_BASE}/api/chat/sessions/${s.id}`, { method: 'DELETE' });
+                        await authFetch(`${import.meta.env.VITE_API_BASE}/api/chat/sessions/${s.id}`, { method: 'DELETE' });
                         setSessionsList(sessionsList.filter(x => x.id !== s.id));
                       }}><span style={{color:'#ff4d4f'}}>删除</span></Popconfirm> }
                     ]
@@ -263,7 +391,7 @@ function App() {
                   localStorage.setItem('lang', newLang);
                 }
                 if (key === 'theme') setTheme(theme === 'dark' ? 'light' : 'dark');
-                if (key === 'logout') { setToken(null); setUser(null); }
+                if (key === 'logout') { setToken(null); setUser(null); localStorage.removeItem('refresh_token'); }
               }
             }} placement="topLeft">
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', justifyContent: collapsed ? 'center' : 'flex-start' }}>
@@ -301,10 +429,17 @@ function App() {
             <Route path="/dashboard" element={<DashboardPage t={t} onNavigate={handleNavigate} />} />
             <Route path="/chat" element={<ChatPage t={t} messages={messages} setMessages={setMessages} sessionId={sessionId} setSessionId={setSessionId} loadingSession={loadingSession} sessionsList={sessionsList} setSessionsList={setSessionsList} />} />
             <Route path="/news" element={<NewsPage t={t} />} />
-            <Route path="/docs" element={<DocsPage t={t} />} />
+            <Route path="/docs" element={isAdmin ? <DocsPage t={t} /> : <Navigate to="/chat" replace />} />
+            <Route path="/users" element={isAdmin ? <UsersPage /> : <Navigate to="/chat" replace />} />
+            <Route path="/audit" element={isAdmin ? <AuditPage /> : <Navigate to="/chat" replace />} />
+            <Route path="/tools" element={isAdmin ? <ToolsPage /> : <Navigate to="/chat" replace />} />
+            <Route path="/intents" element={isAdmin ? <IntentRulesPage /> : <Navigate to="/chat" replace />} />
+            <Route path="/memories" element={isAdmin ? <MemoryPage /> : <Navigate to="/chat" replace />} />
+            <Route path="/quality" element={isAdmin ? <QualityCenterPage /> : <Navigate to="/chat" replace />} />
             <Route path="/skills" element={<SkillsPage t={t} />} />
             <Route path="/learning" element={<LearningPage />} />
             <Route path="/github" element={<GitHubPage t={t} />} />
+            <Route path="/travel" element={<TravelPage />} />
           </Routes>
         </div>
       </div>

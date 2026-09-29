@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Button, Tag, Progress, Timeline, message } from 'antd';
 import { FileTextOutlined, MessageOutlined, NotificationOutlined, BulbOutlined, UploadOutlined, GithubOutlined } from '@ant-design/icons';
+import { authHeaders, authFetch } from '../utils/api';
 
 function DashboardPage({ t, onNavigate }) {
   const [stats, setStats] = useState({ docs: 0, sessions: 0, skills: 0, news: false });
@@ -9,13 +10,13 @@ function DashboardPage({ t, onNavigate }) {
   const [activities, setActivities] = useState([]);
 
   useEffect(() => {
-    fetch(`${import.meta.env.VITE_API_BASE}/api/documents/list?skip=0&limit=1`).then(r => r.json()).then(d => setStats(s => ({ ...s, docs: d.total || 0 })));
-    fetch(`${import.meta.env.VITE_API_BASE}/api/chat/sessions`).then(r => r.json()).then(d => setStats(s => ({ ...s, sessions: d.length || 0 })));
-    fetch(`${import.meta.env.VITE_API_BASE}/api/news/today`).then(r => r.json()).then(d => setStats(s => ({ ...s, news: !!d.summary })));
-    fetch(`${import.meta.env.VITE_API_BASE}/api/chat/sessions/activity`).then(r => r.json()).then(setActivities).catch(() => {});
-    fetch(`${import.meta.env.VITE_API_BASE}/api/skills`).then(r => r.json()).then(d => setStats(s => ({ ...s, skills: d.length || 0 }))).catch(() => {});
-    fetch(`${import.meta.env.VITE_API_BASE}/api/review/today`).then(r => r.json()).then(setReviews).catch(() => {});
-    fetch(`${import.meta.env.VITE_API_BASE}/api/recommend/continue`).then(r => r.json()).then(setRecommend).catch(() => {});
+    authFetch(`${import.meta.env.VITE_API_BASE}/api/documents/list?skip=0&limit=1`).then(r => r.json()).then(d => setStats(s => ({ ...s, docs: d.total || 0 })));
+    authFetch(`${import.meta.env.VITE_API_BASE}/api/chat/sessions`, { headers: authHeaders() }).then(r => r.json()).then(d => setStats(s => ({ ...s, sessions: d.length || 0 })));
+    authFetch(`${import.meta.env.VITE_API_BASE}/api/news/today`).then(r => r.json()).then(d => setStats(s => ({ ...s, news: !!d.summary })));
+    authFetch(`${import.meta.env.VITE_API_BASE}/api/chat/sessions/activity`, { headers: authHeaders() }).then(r => r.json()).then(setActivities).catch(() => {});
+    authFetch(`${import.meta.env.VITE_API_BASE}/api/skills`).then(r => r.json()).then(d => setStats(s => ({ ...s, skills: d.length || 0 }))).catch(() => {});
+    authFetch(`${import.meta.env.VITE_API_BASE}/api/review/today`).then(r => r.json()).then(setReviews).catch(() => {});
+    authFetch(`${import.meta.env.VITE_API_BASE}/api/recommend/continue`).then(r => r.json()).then(setRecommend).catch(() => {});
   }, []);
 
   const cards = [
@@ -87,7 +88,7 @@ function DashboardPage({ t, onNavigate }) {
                 <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 2 }}>已复习 {r.review_count} 次</div>
               </div>
               <Button size="small" type="primary" onClick={async () => {
-                await fetch(`${import.meta.env.VITE_API_BASE}/api/review/${r.id}/done`, { method: 'POST' });
+                await authFetch(`${import.meta.env.VITE_API_BASE}/api/review/${r.id}/done`, { method: 'POST' });
                 setReviews(reviews.filter(x => x.id !== r.id));
                 message.success('复习完成');
               }}>已复习</Button>

@@ -1,4 +1,5 @@
 """LLM 服务 - qwen-plus OpenAI 兼容"""
+
 from openai import OpenAI
 from app.config import settings
 
@@ -10,7 +11,7 @@ def get_client():
     if _client is None:
         _client = OpenAI(
             api_key=settings.DASHSCOPE_API_KEY,
-            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"
+            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
         )
     return _client
 
@@ -20,12 +21,7 @@ def chat_stream(messages):
     if isinstance(messages, str):
         messages = [{"role": "user", "content": messages}]
     client = get_client()
-    stream = client.chat.completions.create(
-        model=settings.LLM_MODEL,
-        messages=messages,
-        stream=True,
-        temperature=0.1
-    )
+    stream = client.chat.completions.create(model=settings.LLM_MODEL, messages=messages, stream=True, temperature=0.1)
     for chunk in stream:
         if chunk.choices[0].delta.content:
             yield chunk.choices[0].delta.content
@@ -36,10 +32,5 @@ def chat(messages):
     if isinstance(messages, str):
         messages = [{"role": "user", "content": messages}]
     client = get_client()
-    resp = client.chat.completions.create(
-        model=settings.LLM_MODEL,
-        messages=messages,
-        stream=False,
-        temperature=0.1
-    )
+    resp = client.chat.completions.create(model=settings.LLM_MODEL, messages=messages, stream=False, temperature=0.1)
     return resp.choices[0].message.content

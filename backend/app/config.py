@@ -1,4 +1,5 @@
 """配置加载"""
+
 from pydantic_settings import BaseSettings
 
 
@@ -10,6 +11,11 @@ class Settings(BaseSettings):
     # LLM
     DASHSCOPE_API_KEY: str = ""
     LLM_MODEL: str = "qwen-plus"
+    DEEPSEEK_API_KEY: str = ""  # DeepSeek 兜底模型 key（用户后续自行配置）
+
+    # LangSmith 链路追踪
+    LANGSMITH_API_KEY: str = ""
+    LANGSMITH_PROJECT: str = "ai-workbench-agent"
 
     # Embedding
     EMBEDDING_MODEL: str = "bge-m3"
@@ -29,6 +35,13 @@ class Settings(BaseSettings):
 
     # Apify
     APIFY_API_KEY: str = ""
+
+    # P2.3 前置过滤层
+    PREFILTER_RATE_LIMIT: int = 20  # 用户维度：时间窗内最大提问次数
+    PREFILTER_RATE_WINDOW: int = 60  # 秒
+    PREFILTER_MAX_LEN: int = 2000  # 问题最大长度（超出提示精简）
+    PREFILTER_LIGHT_ENABLED: bool = False  # L2 轻量模型闲聊分类（默认关；开启需 DASHSCOPE key）
+    PREFILTER_LIGHT_MODEL: str = "qwen-turbo"
 
     class Config:
         env_file = ".env"

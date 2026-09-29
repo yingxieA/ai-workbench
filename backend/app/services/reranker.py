@@ -1,4 +1,5 @@
 """Reranker 服务 - bge-reranker-v2-m3 本地 GPU 推理"""
+
 import os
 from sentence_transformers import CrossEncoder
 from app.config import settings

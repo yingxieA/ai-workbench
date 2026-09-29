@@ -1,5 +1,5 @@
 """AI 日报服务 - Apify 抓取 + LLM 摘要"""
-import os
+
 import json
 from datetime import date
 from sqlalchemy import text
@@ -67,10 +67,12 @@ async def generate_daily_news() -> str:
     # 2. 构造 Prompt（注入当前日期，强制 LLM 使用正确日期）
     today_str = date.today().strftime("%Y年%m月%d日")
 
-    article_titles = "\n".join([
-        f"- [{a.get('source', 'AI')}] {a.get('title', '')} - {str(a.get('summary', ''))[:80]}..."
-        for a in articles[:15]
-    ])
+    article_titles = "\n".join(
+        [
+            f"- [{a.get('source', 'AI')}] {a.get('title', '')} - {str(a.get('summary', ''))[:80]}..."
+            for a in articles[:15]
+        ]
+    )
 
     prompt = f"""你是一个 AI 领域的资深技术编辑。请将以下今日（{today_str}）AI 新闻整理成一份简洁的日报摘要。
 要求：
@@ -102,7 +104,11 @@ async def generate_daily_news() -> str:
                     VALUES (:d, :s, CAST(:a AS JSON))
                     ON CONFLICT (news_date) DO UPDATE SET summary = EXCLUDED.summary
                 """),
-                {"d": date.today(), "s": summary, "a": json.dumps(articles, ensure_ascii=False)}
+                {
+                    "d": date.today(),
+                    "s": summary,
+                    "a": json.dumps(articles, ensure_ascii=False),
+                },
             )
             db.commit()
             logger.info("AI 日报已成功写入数据库")
@@ -122,7 +128,7 @@ def get_today_news() -> dict:
     try:
         row = db.execute(
             text("SELECT summary, articles FROM daily_news WHERE news_date = :d AND is_deleted = false"),
-            {"d": date.today()}
+            {"d": date.today()},
         ).fetchone()
         if row:
             return {"summary": row[0], "articles": row[1]}

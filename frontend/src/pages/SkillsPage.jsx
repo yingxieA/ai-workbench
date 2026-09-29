@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Button, Form, Input, Modal, Drawer, Tabs, Tag, Space, Progress, Collapse, Checkbox, Divider, Steps, Popconfirm, Dropdown, Select, message } from 'antd';
 import { ReloadOutlined, MoreOutlined, DeleteOutlined, ArrowUpOutlined, ArrowDownOutlined, PlayCircleOutlined, FileTextOutlined, GithubOutlined, ArrowRightOutlined } from '@ant-design/icons';
+import { authFetch } from '../utils/api';
 
 function SkillsPage({ t }) {
   const [skills, setSkills] = useState([]);
@@ -19,7 +20,7 @@ function SkillsPage({ t }) {
 
   const fetchSkills = async (sort) => {
     const s = sort || sortBy;
-    const res = await fetch(`${import.meta.env.VITE_API_BASE}/api/skills?sort=${s}`);
+    const res = await authFetch(`${import.meta.env.VITE_API_BASE}/api/skills?sort=${s}`);
     setSkills(await res.json());
   };
 
@@ -28,20 +29,20 @@ function SkillsPage({ t }) {
   const handleAdd = async () => {
     try {
       const values = await form.validateFields();
-      await fetch(`${import.meta.env.VITE_API_BASE}/api/skills`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(values) });
+      await authFetch(`${import.meta.env.VITE_API_BASE}/api/skills`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(values) });
       message.success('添加成功'); setModalOpen(false); form.resetFields(); fetchSkills();
     } catch (e) { console.error(e); }
   };
 
   const handleUpdate = async (id, data) => {
-    await fetch(`${import.meta.env.VITE_API_BASE}/api/skills/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+    await authFetch(`${import.meta.env.VITE_API_BASE}/api/skills/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
     fetchSkills();
   };
 
   const openDrawer = async (s) => {
     setDrawerSkill({ ...s });
     setDrawerOpen(true);
-    const res = await fetch(`${import.meta.env.VITE_API_BASE}/api/skills`);
+    const res = await authFetch(`${import.meta.env.VITE_API_BASE}/api/skills`);
     const list = await res.json();
     const fresh = list.find(x => x.id === s.id);
     if (fresh) setDrawerSkill({ ...fresh });
@@ -53,13 +54,13 @@ function SkillsPage({ t }) {
     const completed = !task.completed;
     const tasks = (drawerSkill.tasks || []).map((t, i) => i === idx ? { ...t, completed } : t);
     setDrawerSkill({ ...drawerSkill, tasks });
-    await fetch(`${import.meta.env.VITE_API_BASE}/api/skills/${drawerSkill.id}/tasks/${task.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ completed }) });
+    await authFetch(`${import.meta.env.VITE_API_BASE}/api/skills/${drawerSkill.id}/tasks/${task.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ completed }) });
     fetchSkills();
   };
 
   const addSubTask = async (text) => {
     if (!text.trim()) return;
-    const res = await fetch(`${import.meta.env.VITE_API_BASE}/api/skills/${drawerSkill.id}/tasks`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: text }) });
+    const res = await authFetch(`${import.meta.env.VITE_API_BASE}/api/skills/${drawerSkill.id}/tasks`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: text }) });
     const data = await res.json();
     setDrawerSkill({ ...drawerSkill, tasks: [...(drawerSkill.tasks || []), data] });
   };
@@ -72,14 +73,14 @@ function SkillsPage({ t }) {
   };
 
   const deleteTask = async (taskId) => {
-    await fetch(`${import.meta.env.VITE_API_BASE}/api/skills/${drawerSkill.id}/tasks/${taskId}`, { method: 'DELETE' });
+    await authFetch(`${import.meta.env.VITE_API_BASE}/api/skills/${drawerSkill.id}/tasks/${taskId}`, { method: 'DELETE' });
     setDrawerSkill({ ...drawerSkill, tasks: (drawerSkill.tasks || []).filter(t => t.id !== taskId) });
   };
 
   const handleTaskGuide = async (i, t) => {
     setAiTaskLoading(i);
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_BASE}/api/skills/${drawerSkill.id}/tasks/${t.id}/generate_guide`, { method: 'POST' });
+      const res = await authFetch(`${import.meta.env.VITE_API_BASE}/api/skills/${drawerSkill.id}/tasks/${t.id}/generate_guide`, { method: 'POST' });
       const data = await res.json();
       if (data.task) {
         const tasks = (drawerSkill.tasks || []).map((x, j) => j === i ? { ...x, ...data.task } : x);
@@ -99,7 +100,7 @@ function SkillsPage({ t }) {
 
   const handleAIGenerate = async () => {
     setAiLoading(true);
-    const res = await fetch(`${import.meta.env.VITE_API_BASE}/api/skills/${drawerSkill.id}/generate_subtasks`, { method: 'POST' });
+    const res = await authFetch(`${import.meta.env.VITE_API_BASE}/api/skills/${drawerSkill.id}/generate_subtasks`, { method: 'POST' });
     const data = await res.json();
     if (data.tasks) { setDrawerSkill({ ...drawerSkill, tasks: data.tasks }); message.success('AI 拆解完成'); }
     else { message.error('AI 生成失败'); }
@@ -108,7 +109,7 @@ function SkillsPage({ t }) {
 
   const handleAIResources = async () => {
     setResourceLoading(true);
-    const res = await fetch(`${import.meta.env.VITE_API_BASE}/api/skills/${drawerSkill.id}/generate_resources`, { method: 'POST' });
+    const res = await authFetch(`${import.meta.env.VITE_API_BASE}/api/skills/${drawerSkill.id}/generate_resources`, { method: 'POST' });
     const data = await res.json();
     if (data.resources) { setDrawerSkill({ ...drawerSkill, resources: data.resources }); message.success('AI 推荐完成'); }
     else { message.error('推荐失败'); }
@@ -136,12 +137,12 @@ function SkillsPage({ t }) {
       {/* 技能卡片网格 */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 16 }}>
         {skills.map(s => (
-          <div key={s.id} className="skill-card" style={{ 
-            padding: 16, 
-            borderRadius: 8, 
+          <div key={s.id} className="skill-card" style={{
+            padding: 16,
+            borderRadius: 8,
             border: '1px solid #E5E7EB',
             background: '#fff',
-            cursor: 'pointer', 
+            cursor: 'pointer',
             position: 'relative',
             transition: 'all 0.2s ease',
             boxShadow: '0 2px 8px rgba(0, 0, 0, 0.04)',
@@ -158,12 +159,12 @@ function SkillsPage({ t }) {
           >
             {/* 第一行：标题 + 状态 + 更多 */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-              <div style={{ 
-                fontSize: 15, 
-                fontWeight: 600, 
+              <div style={{
+                fontSize: 15,
+                fontWeight: 600,
                 color: '#111827',
-                overflow: 'hidden', 
-                textOverflow: 'ellipsis', 
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
                 whiteSpace: 'nowrap',
                 flex: 1,
                 marginRight: 8,
@@ -187,7 +188,7 @@ function SkillsPage({ t }) {
                     { key: 'edit_goal', label: '编辑目标', onClick: () => openDrawer(s) },
                     { key: 'delete', label: (
                       <Popconfirm title="确定删除该技能？" okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={async () => {
-                        await fetch(`${import.meta.env.VITE_API_BASE}/api/skills/${s.id}`, { method: 'DELETE' });
+                        await authFetch(`${import.meta.env.VITE_API_BASE}/api/skills/${s.id}`, { method: 'DELETE' });
                         fetchSkills();
                       }}><span style={{ color: '#ff4d4f' }}>删除</span></Popconfirm>
                     )}
@@ -200,9 +201,9 @@ function SkillsPage({ t }) {
 
             {/* 第二行：描述 */}
             {s.goal && (
-              <div style={{ 
-                fontSize: 13, 
-                color: '#4B5563', 
+              <div style={{
+                fontSize: 13,
+                color: '#4B5563',
                 lineHeight: 1.5,
                 marginBottom: 12,
                 display: '-webkit-box',
@@ -223,8 +224,8 @@ function SkillsPage({ t }) {
 
             {/* 第四行：进度条（整行） */}
             <div style={{ marginBottom: 12 }}>
-              <Progress 
-                percent={s.progress || 0} 
+              <Progress
+                percent={s.progress || 0}
                 strokeColor="#4D6BFE"
                 trailColor="#F3F4F6"
                 size="small"
@@ -234,8 +235,8 @@ function SkillsPage({ t }) {
 
             {/* 第五行：开始学习按钮（右下角） */}
             <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-              <Button 
-                type="link" 
+              <Button
+                type="link"
                 size="small"
                 icon={<ArrowRightOutlined />}
                 style={{ color: '#4D6BFE', padding: 0, fontSize: 13, fontWeight: 500 }}
@@ -328,8 +329,8 @@ function SkillsPage({ t }) {
                             style={{ borderRadius: 8, background: '#faf8f5' }} />
                           <Button size="small" type="primary" style={{ marginTop: 8, background: 'var(--accent-color)', borderColor: 'var(--accent-color)' }} onClick={async () => {
                             try {
-                              await fetch(`${import.meta.env.VITE_API_BASE}/api/skills/${drawerSkill.id}/tasks/${t.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ notes: t.notes }) });
-                              const res = await fetch(`${import.meta.env.VITE_API_BASE}/api/skills`);
+                              await authFetch(`${import.meta.env.VITE_API_BASE}/api/skills/${drawerSkill.id}/tasks/${t.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ notes: t.notes }) });
+                              const res = await authFetch(`${import.meta.env.VITE_API_BASE}/api/skills`);
                               const list = await res.json();
                               const fresh = list.find(s => s.id === drawerSkill.id);
                               if (fresh) setDrawerSkill(fresh);
@@ -386,7 +387,7 @@ function SkillsPage({ t }) {
                     <Button size="small" loading={verifying} onClick={async () => {
                       setVerifying(true);
                       try {
-                        const res = await fetch(`${import.meta.env.VITE_API_BASE}/api/skills/${drawerSkill.id}/generate_verification`, { method: 'POST' });
+                        const res = await authFetch(`${import.meta.env.VITE_API_BASE}/api/skills/${drawerSkill.id}/generate_verification`, { method: 'POST' });
                         const data = await res.json();
                         if (data.verification) { setDrawerSkill({ ...drawerSkill, verification: data.verification }); message.success('验收标准已生成'); }
                       } catch { message.error('生成失败'); }
@@ -409,7 +410,7 @@ function SkillsPage({ t }) {
                       <Button type="primary" style={{ background: 'var(--accent-color)', borderColor: 'var(--accent-color)' }} loading={quizLoading} onClick={async () => {
                         setQuizLoading(true);
                         try {
-                          const res = await fetch(`${import.meta.env.VITE_API_BASE}/api/skills/${drawerSkill.id}/generate_quiz`, { method: 'POST' });
+                          const res = await authFetch(`${import.meta.env.VITE_API_BASE}/api/skills/${drawerSkill.id}/generate_quiz`, { method: 'POST' });
                           const data = await res.json();
                           if (data.quiz) setQuizData(data.quiz);
                         } catch { message.error('生成失败'); }

@@ -1,0 +1,48 @@
+{
+  "mode": "full",
+  "route_acc": 100.0,
+  "latencies": [
+    16583
+  ],
+  "results": [
+    {
+      "route_ok": true,
+      "route_note": "预期=rag",
+      "kw_hits": [],
+      "kw_rate": 1.0,
+      "retrieval_rate": 1.0,
+      "retrieval_hits": [],
+      "hallucination_flags": [],
+      "citation_ok": true,
+      "pred_route": "rag",
+      "confidence": 0.95,
+      "n_contexts": 3,
+      "tool_ok": null,
+      "loop_ok": null,
+      "tool_calls": [],
+      "id": "fb_000",
+      "category": "rag_factual",
+      "query": "解释 Transformer 架构",
+      "answer": "**Transformer 架构**是2017年由Google提出的一种基于注意力机制的模型架构，它在自然语言处理（NLP）领域引起了革命性的变化。Transformer架构的核心特点包括：\n\n- **自注意力机制（Self-Attention Mechanism）**：这是Transformer最核心的部分，允许模型在处理序列数据时能够关注到输入序列中的不同位置，从而捕捉长距离依赖关系。\n- **多头注意力（Multi-Head Attention）**：通过并行运行多个注意力机制来增强模型的能力，每个注意力“头”可以学习到不同的特征表示。\n- **位置编码（Positional Encoding）**：由于自注意力机制本身不考虑输入元素的位置信息，因此需要添加位置编码来为模型提供序列中元素的位置信息。\n- **前馈神经网络（Feed-Forward Neural Networks）**：每个位置上的向量都会独立地通过相同的全连接层进行处理，这有助于增加模型的非线性表达能力。\n- **残差连接与层归一化（Residual Connections and Layer Normalization）**：这些技术被用来提高深层网络训练时的稳定性和效率。\n\nTransformer架构的设计使得它可以非常有效地处理长序列，并且相比之前的循环神经网络（RNN）或卷积神经网络（CNN），它在并行计算方面具有显著优势，极大地提高了训练速度和性能[[1]]。",
+      "latency_ms": 16583,
+      "contexts_meta": [
+        {
+          "index": 1,
+          "title": "AI学习.md",
+          "content": "- | 概念               | 定义                                                         | 关系                                                         |\r\n  | ..."
+        },
+        {
+          "index": 2,
+          "title": "AI学习.md",
+          "content": "#### 3.2、Transformers核心架构与组件\r- **核心 API 层级（从高到低）**..."
+        },
+        {
+          "index": 3,
+          "title": "AI学习.md",
+          "content": "![image-20260411130459174](C:\\Users\\18701\\AppData\\Roaming\\Typora\\typora-user-images\\image-20260411130459174.png)\r### 3、Transformers库：HuggingFace生态，用Pi..."
+        }
+      ],
+      "expected_tool": null
+    }
+  ]
+}

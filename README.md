@@ -80,8 +80,9 @@ ai-workbench/
 │   │   │   ├── news.py          # AI 日报/GitHub 接口
 │   │   │   ├── skills.py        # 技能管理接口
 │   │   │   ├── learning.py      # 学习路径接口
+│   │   │   ├── travel.py       # 旅游规划接口
 │   │   │   ├── recommend.py     # 推荐接口
-│   │   │   └── review.py        # 复习接口
+│   │   │   └── review.py       # 复习接口
 │   │   ├── services/            # 业务逻辑层
 │   │   │   ├── chunker.py       # 文档分块
 │   │   │   ├── embedding.py     # Embedding 服务
@@ -112,6 +113,7 @@ ai-workbench/
 │   │   │   ├── GitHubPage.jsx      # GitHub 周榜
 │   │   │   ├── SkillsPage.jsx       # 技能管理
 │   │   │   ├── LearningPage.jsx     # 学习路径
+│   │   │   ├── TravelPage.jsx      # 旅游规划
 │   │   │   └── DocsPage.jsx          # 文档管理
 │   │   ├── components/          # 公共组件
 │   │   │   ├── ChatInput.jsx       # 聊天输入框
@@ -246,7 +248,8 @@ npm run dev
 | `skills` | 技能表 | id, name, category, goal, progress, status |
 | `skill_tasks` | 技能子任务 | id, skill_id, title, completed, sort_order |
 | `skill_resources` | 学习资源 | id, skill_id, url, title |
-| `learning_paths` | 学习路径 | id, goal, nodes(JSON), created_at |
+| `learning_paths` | 学习路径 | id, goal, nodes(JSON), completed_nodes(JSON), created_at |
+| `travel_plans` | 旅游规划 | id, destination, origin, days, plan_data(JSON), created_at |
 | `review_items` | 复习项 | id, title, review_count, last_reviewed |
 | `pdf_tasks` | PDF 异步任务 | id, status, chunks, error |
 
@@ -359,9 +362,30 @@ npm run dev
 
 **特性：**
 - 分阶段路径生成
-- 任务完成状态
+- 任务完成状态（持久化）
 - 加入技能库
 - 整体进度统计
+- AI 帮教（解释学习任务）
+
+### 7. 旅游规划模块
+
+**流程：**
+```
+输入参数 → 并发获取（天气+景点+酒店+交通） → LLM 生成规划 → SSE 流式返回
+```
+
+**关键文件：**
+- `backend/app/api/travel.py` - 旅游规划 API
+- `frontend/src/pages/TravelPage.jsx` - 旅游规划页面
+
+**特性：**
+- 高德地图 API（天气、景点 POI、酒店 POI）
+- 聚合数据火车票查询
+- 每日天气卡片（温度、风力、降水概率、AI 穿搭建议）
+- 行程时间轴（每日时间轴 + AI 点评）
+- 酒店推荐卡片（评分、价格、位置）
+- 交通方案对比（车次、时间、价格、推荐理由）
+- 预算统计（交通/住宿/餐饮/门票/总计）
 
 ## API 接口
 
@@ -404,6 +428,20 @@ npm run dev
 | PUT | `/api/skills/:id` | 更新技能 |
 | DELETE | `/api/skills/:id` | 删除技能 |
 
+### 学习路径相关
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/learning` | 学习路径列表 |
+| POST | `/api/learning/generate` | 生成学习路径 |
+| PUT | `/api/learning/:id/node` | 更新节点完成状态 |
+| DELETE | `/api/learning/:id` | 删除学习路径 |
+| POST | `/api/learning/ai-tutor` | AI 帮教（SSE 流式） |
+
+### 旅游规划相关
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/travel/plan` | 生成旅游规划（SSE 流式） |
+
 ## 前端架构
 
 ### 状态管理（zustand）
@@ -414,11 +452,11 @@ npm run dev
   // 认证
   token, setToken,
   user, setUser,
-  
+
   // 页面导航
   page, setPage,
   collapsed, setCollapsed,
-  
+
   // 对话
   messages, setMessages,
   sessionId, setSessionId,
@@ -436,6 +474,7 @@ npm run dev
 /github     → GitHubPage（GitHub 周榜）
 /skills     → SkillsPage（技能管理）
 /learning   → LearningPage（学习路径）
+/travel     → TravelPage（旅游规划）
 /docs       → DocsPage（文档管理）
 ```
 
@@ -480,6 +519,8 @@ npm run dev
 | `MINIO_ENDPOINT` | localhost:9000 | MinIO 地址 |
 | `DASHSCOPE_API_KEY` | - | 通义千问 API Key |
 | `MINERU_API_KEY` | - | MinerU 解析 API Key |
+| `AMAP_KEY` | - | 高德地图 API Key（天气、POI 搜索） |
+| `JUHE_TRAIN_KEY` | - | 聚合数据火车票 API Key |
 
 ### 前端配置（`frontend/.env`）
 
@@ -518,7 +559,8 @@ npm run dev
 - [x] GitHub 项目搜索
 - [x] 项目介绍 + AI 拆解（数据库缓存）
 - [x] 技能管理（CRUD + AI 拆解子任务）
-- [x] 学习路径（分阶段生成 + 加入技能库）
+- [x] 学习路径（分阶段生成 + 加入技能库 + 完成状态持久化 + AI 帮教）
+- [x] 旅游规划（天气+景点+酒店+交通+行程时间轴）
 - [x] Dashboard 总览（统计卡片 + 最近动态）
 - [x] 深色/浅色主题切换
 - [x] 国际化（中/英切换）
@@ -526,7 +568,7 @@ npm run dev
 
 ### 待优化
 - [ ] 数据备份脚本
-- [ ] 学习路径节点完成状态持久化
+- [ ] 旅游规划历史记录保存
 - [ ] 更多模型支持
 - [ ] 用户权限管理
 

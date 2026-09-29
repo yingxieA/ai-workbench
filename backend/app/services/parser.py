@@ -1,4 +1,5 @@
 """文档解析服务"""
+
 import json
 import io
 import uuid
@@ -12,7 +13,7 @@ async def parse_pdf(file_bytes: bytes, filename: str = "doc.pdf") -> str:
     """调 MinerU API 解析 PDF，返回 Markdown 文本"""
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {settings.MINERU_API_KEY}"
+        "Authorization": f"Bearer {settings.MINERU_API_KEY}",
     }
     data_id = uuid.uuid4().hex[:16]
 
@@ -24,8 +25,8 @@ async def parse_pdf(file_bytes: bytes, filename: str = "doc.pdf") -> str:
             json={
                 "files": [{"name": filename, "data_id": data_id}],
                 "model_version": "vlm",
-                "language": "ch"
-            }
+                "language": "ch",
+            },
         )
         result = resp.json()
         if result.get("code") != 0:
@@ -44,7 +45,7 @@ async def parse_pdf(file_bytes: bytes, filename: str = "doc.pdf") -> str:
             await asyncio.sleep(3)
             result_resp = await client.get(
                 f"{settings.MINERU_API_URL}/extract-results/batch/{batch_id}",
-                headers=headers
+                headers=headers,
             )
             batch_data = result_resp.json().get("data", {})
             results = batch_data.get("extract_result", [])
@@ -73,7 +74,13 @@ def parse_ipynb(file_bytes: bytes) -> list[dict]:
         cell_type = cell.get("cell_type")
         source = "".join(cell.get("source", []))
         if cell_type == "markdown":
-            cells.append({"type": "markdown", "source_type": "jupyter_markdown", "content": source})
+            cells.append(
+                {
+                    "type": "markdown",
+                    "source_type": "jupyter_markdown",
+                    "content": source,
+                }
+            )
         elif cell_type == "code":
             cells.append({"type": "code", "source_type": "jupyter_code", "content": source})
             for out in cell.get("outputs", []):
@@ -83,5 +90,11 @@ def parse_ipynb(file_bytes: bytes) -> list[dict]:
                 elif "data" in out and "text/plain" in out["data"]:
                     text = "".join(out["data"]["text/plain"])
                 if text:
-                    cells.append({"type": "output", "source_type": "jupyter_output", "content": text[:500]})
+                    cells.append(
+                        {
+                            "type": "output",
+                            "source_type": "jupyter_output",
+                            "content": text[:500],
+                        }
+                    )
     return cells

@@ -1,4 +1,4 @@
--- ============================================================
+﻿-- ============================================================
 -- AI Workbench 数据库初始化脚本 v3
 -- PostgreSQL 16 + pgvector
 -- ============================================================
@@ -107,8 +107,30 @@ CREATE TABLE learning_paths (
     id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     goal            VARCHAR(200) NOT NULL,
     nodes           JSONB DEFAULT '[]'::jsonb,
+    completed_nodes JSONB DEFAULT '[]'::jsonb,
+    is_deleted      BOOLEAN DEFAULT FALSE,
     created_at      TIMESTAMP DEFAULT NOW(),
-    updated_at      TIMESTAMP DEFAULT NOW()
+    updated_at      TIMESTAMP DEFAULT NOW(),
+    deleted_at      TIMESTAMP
+);
+
+-- ============================================================
+-- 旅游规划表
+-- ============================================================
+CREATE TABLE travel_plans (
+    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    destination     VARCHAR(100) NOT NULL,
+    origin          VARCHAR(100),
+    start_date      VARCHAR(20),
+    days            INT DEFAULT 3,
+    people          INT DEFAULT 2,
+    budget          VARCHAR(50) DEFAULT '中等',
+    preferences     VARCHAR(200),
+    plan_data       JSONB DEFAULT '{}'::jsonb,
+    is_deleted      BOOLEAN DEFAULT FALSE,
+    created_at      TIMESTAMP DEFAULT NOW(),
+    updated_at      TIMESTAMP DEFAULT NOW(),
+    deleted_at      TIMESTAMP
 );
 
 -- ============================================================
@@ -198,8 +220,8 @@ COMMENT ON COLUMN learning_paths.created_at IS '创建时间';
 COMMENT ON COLUMN learning_paths.updated_at IS '更新时间';
 
 
-ALTER TABLE chunks ADD COLUMN IF NOT EXISTS tsv tsvector;
-CREATE INDEX IF NOT EXISTS idx_chunks_tsv ON chunks USING GIN(tsv);
+-- tsv 字段：用 jieba 分词后的文本，普通 text 类型（不用 tsvector，避免语法错误）
+ALTER TABLE chunks ADD COLUMN IF NOT EXISTS tsv TEXT;
 
 -- ============================================================
 -- 对话表
@@ -342,4 +364,3 @@ CREATE TABLE IF NOT EXISTS news_tasks (
     updated_at TIMESTAMP DEFAULT NOW(),
     deleted_at TIMESTAMP
 );
-

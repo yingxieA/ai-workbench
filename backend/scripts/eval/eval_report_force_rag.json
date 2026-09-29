@@ -1,0 +1,175 @@
+{
+  "mode": "force-rag",
+  "results": [
+    {
+      "route_ok": true,
+      "route_note": "预期=direct",
+      "kw_hits": [
+        "助手",
+        "帮助"
+      ],
+      "kw_rate": 0.67,
+      "retrieval_rate": 1.0,
+      "retrieval_hits": [],
+      "hallucination_flags": [],
+      "citation_ok": null,
+      "pred_route": "direct",
+      "confidence": 0.98,
+      "n_contexts": 0,
+      "id": "test_001",
+      "category": "chitchat",
+      "query": "你好，请问你是谁？",
+      "answer": "你好，我是AI学习工作台的智能助手。有什么可以帮助你的吗？",
+      "latency_ms": 4070,
+      "contexts_meta": []
+    },
+    {
+      "route_ok": true,
+      "route_note": "预期=direct",
+      "kw_hits": [
+        "瑞利散射",
+        "大气"
+      ],
+      "kw_rate": 0.67,
+      "retrieval_rate": 1.0,
+      "retrieval_hits": [],
+      "hallucination_flags": [],
+      "citation_ok": null,
+      "pred_route": "direct",
+      "confidence": 0.98,
+      "n_contexts": 0,
+      "id": "test_002",
+      "category": "common_sense",
+      "query": "天空为什么是蓝色的？",
+      "answer": "天空之所以呈现蓝色，主要是因为大气中的分子和微小颗粒对太阳光的散射作用。这种现象可以用**瑞利散射**来解释：\n\n1. **太阳光组成**：太阳发出的光实际上是包含了红、橙、黄、绿、蓝、靛、紫等多种颜色的白光。\n2. **光线进入地球大气层**：当这些光线进入地球的大气层时，会遇到空气中的氮气和氧气分子等。\n3. **散射过程**：根据瑞利散射原理，波长较短（如蓝色和紫色）的光比波长较长（如红色和黄色）的光更容易被大气中的粒子散射。这意味着，在所有颜色中，蓝色光被散射得最多。\n4. **人眼感知**：虽然紫色光也被强烈散射，但由于太阳光中蓝色光的比例高于紫色光，并且人眼对蓝色更加敏感，因此我们看到的天空呈现出蓝色。\n\n此外，日出和日落时分天空变为红色或橙色也是由于此时太阳位置较低，光线需要穿过更厚的大气层，使得大部分蓝色和绿色光线已经被散射掉，而剩下的主要是红色和橙色光线直接到达观察者的眼睛。",
+      "latency_ms": 12788,
+      "contexts_meta": []
+    },
+    {
+      "route_ok": false,
+      "route_note": "预期=rag",
+      "kw_hits": [],
+      "kw_rate": 0.0,
+      "retrieval_rate": 0.0,
+      "retrieval_hits": [],
+      "hallucination_flags": [
+        "应走 rag 却走 direct(回答无引用依据)"
+      ],
+      "citation_ok": null,
+      "pred_route": "direct",
+      "confidence": 0.85,
+      "n_contexts": 0,
+      "id": "test_003",
+      "category": "rag_factual",
+      "query": "你们公司的退货政策是什么？",
+      "answer": "看起来您可能在询问某个公司的退货政策，但我作为AI学习工作台的智能助手，并不隶属于任何销售商品或提供服务的公司。如果您是想了解特定公司的退货政策，建议直接访问该公司的官方网站或者联系他们的客服获取最准确的信息。如果有关于AI学习方面的问题，我很乐意为您提供帮助！",
+      "latency_ms": 16430,
+      "contexts_meta": []
+    },
+    {
+      "route_ok": true,
+      "route_note": "预期=rag",
+      "kw_hits": [],
+      "kw_rate": 0.0,
+      "retrieval_rate": 0.0,
+      "retrieval_hits": [],
+      "hallucination_flags": [
+        "rag 分支但检索为空(回答无依据)"
+      ],
+      "citation_ok": false,
+      "pred_route": "rag",
+      "confidence": 0.85,
+      "n_contexts": 0,
+      "id": "test_004",
+      "category": "rag_factual",
+      "query": "服务条款中关于数据隐私是怎么规定的？",
+      "answer": "根据现有知识库无法准确回答该问题。请提供具体的服务条款或相关文档，这样我才能更准确地帮助你理解其中关于数据隐私的规定。如果你有任何具体的条款内容，也可以直接分享给我进行解读。",
+      "latency_ms": 42300,
+      "contexts_meta": []
+    },
+    {
+      "route_ok": true,
+      "route_note": "预期=rag",
+      "kw_hits": [],
+      "kw_rate": 0.0,
+      "retrieval_rate": 0.0,
+      "retrieval_hits": [],
+      "hallucination_flags": [
+        "rag 分支但检索为空(回答无依据)"
+      ],
+      "citation_ok": false,
+      "pred_route": "rag",
+      "confidence": 0.9,
+      "n_contexts": 0,
+      "id": "test_005",
+      "category": "rag_summary",
+      "query": "帮我总结一下《员工手册》中关于考勤的内容。",
+      "answer": "根据现有知识库无法准确回答该问题。我目前没有接收到关于《员工手册》的具体内容或相关参考资料。如果你能提供一些具体的信息或者文档，我很乐意帮你进行总结。",
+      "latency_ms": 46258,
+      "contexts_meta": []
+    },
+    {
+      "route_ok": true,
+      "route_note": "宽容判定(direct/rag均可)",
+      "kw_hits": [
+        "天气"
+      ],
+      "kw_rate": 0.33,
+      "retrieval_rate": 1.0,
+      "retrieval_hits": [],
+      "hallucination_flags": [],
+      "citation_ok": null,
+      "pred_route": "direct",
+      "confidence": 0.98,
+      "n_contexts": 0,
+      "id": "test_006",
+      "category": "out_of_scope",
+      "query": "今天天气怎么样？",
+      "answer": "我目前无法直接获取实时天气信息。你可以查看手机上的天气应用或者访问常用的天气网站来获取今天的天气情况。如果需要，我可以帮助你了解如何根据天气预报选择合适的外出装备或活动建议。",
+      "latency_ms": 49070,
+      "contexts_meta": []
+    },
+    {
+      "route_ok": true,
+      "route_note": "预期=rag",
+      "kw_hits": [],
+      "kw_rate": 0.0,
+      "retrieval_rate": 0.0,
+      "retrieval_hits": [],
+      "hallucination_flags": [
+        "rag 分支但检索为空(回答无依据)"
+      ],
+      "citation_ok": false,
+      "pred_route": "rag",
+      "confidence": 0.85,
+      "n_contexts": 0,
+      "id": "test_007",
+      "category": "rag_factual",
+      "query": "API的调用频率限制是多少次/分钟？",
+      "answer": "根据现有知识库无法准确回答该问题。API的调用频率限制取决于具体的API服务提供商及其设定的规则。不同的API可能有不同的调用频率限制，有的可能是每分钟几十次，有的则可能达到每秒多次。为了获取准确的信息，请查阅你所使用API的具体文档或联系其技术支持。",
+      "latency_ms": 53205,
+      "contexts_meta": []
+    },
+    {
+      "route_ok": false,
+      "route_note": "预期=direct",
+      "kw_hits": [],
+      "kw_rate": 0.0,
+      "retrieval_rate": 1.0,
+      "retrieval_hits": [],
+      "hallucination_flags": [
+        "rag 分支但检索为空(回答无依据)"
+      ],
+      "citation_ok": false,
+      "pred_route": "rag",
+      "confidence": 0.8,
+      "n_contexts": 0,
+      "id": "test_008",
+      "category": "ambiguous",
+      "query": "它怎么用？",
+      "answer": "您提到的“它”具体是指什么呢？能否提供更多的背景信息或明确一下您想了解的内容？这样我才能更准确地帮助您。",
+      "latency_ms": 56088,
+      "contexts_meta": []
+    }
+  ]
+}

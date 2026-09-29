@@ -359,6 +359,95 @@ body.dark .ant-layout-content {
   background: #F9FAFB;
 }
 
+/* ===== 管理页：统计卡片 & 表格行 ===== */
+.stat-card:hover {
+  box-shadow: var(--card-hover-shadow);
+  transform: translateY(-1px);
+}
+
+.user-row:hover > td,
+.audit-row:hover > td {
+  background: var(--bg-primary) !important;
+}
+
+.user-row td,
+.audit-row td {
+  transition: background 0.2s;
+}
+
+/* 深色模式下管理页表格行 hover */
+body.dark .user-row:hover > td,
+body.dark .audit-row:hover > td {
+  background: var(--bg-hover) !important;
+}
+
+/* ===== 学习路径资源卡片 ===== */
+.resource-card:hover {
+  background: #fff !important;
+  border-color: #4D6BFE !important;
+  box-shadow: 0 4px 12px rgba(77, 107, 254, 0.1) !important;
+}
+
+/* ===== 打字机光标 ===== */
+.typing-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  background: #4D6BFE;
+  margin-left: 2px;
+  animation: blink 1s infinite;
+  vertical-align: text-bottom;
+}
+
+@keyframes blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+
+/* ===== Markdown 内容样式 ===== */
+.markdown-content h1,
+.markdown-content h2,
+.markdown-content h3,
+.markdown-content h4 {
+  color: #111827;
+  font-weight: 600;
+  margin: 16px 0 8px 0;
+}
+
+.markdown-content h1 { font-size: 18px; }
+.markdown-content h2 { font-size: 16px; }
+.markdown-content h3 { font-size: 15px; }
+.markdown-content h4 { font-size: 14px; }
+
+.markdown-content p {
+  margin: 8px 0;
+  line-height: 1.8;
+}
+
+.markdown-content ul,
+.markdown-content ol {
+  margin: 8px 0;
+  padding-left: 24px;
+}
+
+.markdown-content li {
+  margin: 4px 0;
+  line-height: 1.7;
+}
+
+.markdown-content strong {
+  color: #111827;
+  font-weight: 600;
+}
+
+.markdown-content code {
+  background: #EEF2FF;
+  color: #4D6BFE;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
 .news-content p {
   margin: 10px 0;
 }

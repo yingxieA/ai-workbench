@@ -1,4 +1,5 @@
 """Embedding 服务 - bge-m3 本地 GPU 推理"""
+
 import os
 import time
 import threading
@@ -26,12 +27,13 @@ def get_embedding_model():
                 model_path = _resolve_model_path()
                 logger.info(f"加载模型: {model_path}, device={settings.EMBEDDING_DEVICE}")
                 import torch
+
                 logger.info(f"CUDA 可用: {torch.cuda.is_available()}")
                 if torch.cuda.is_available():
                     logger.info(f"GPU 显存: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
                 t0 = time.time()
                 _model = SentenceTransformer(model_path, device=settings.EMBEDDING_DEVICE)
-                logger.info(f"模型加载完成，耗时 {time.time()-t0:.1f}s")
+                logger.info(f"模型加载完成，耗时 {time.time() - t0:.1f}s")
     return _model
 
 
@@ -41,5 +43,5 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
     logger.info(f"向量化 {len(texts)} 个块")
     t0 = time.time()
     embeddings = model.encode(texts, normalize_embeddings=True)
-    logger.info(f"向量化完成，耗时 {time.time()-t0:.2f}s")
+    logger.info(f"向量化完成，耗时 {time.time() - t0:.2f}s")
     return embeddings.tolist()
