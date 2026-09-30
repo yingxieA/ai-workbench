@@ -3,6 +3,7 @@
 import asyncio
 import time
 import json
+import uuid
 from collections import defaultdict
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -14,6 +15,7 @@ from app.models.document import ChatSession, ChatMessage, Document, ChatShare
 from app.api.auth import get_current_user_id
 from app.agent.graph import agent_graph
 from app.agent.state import AgentState
+from app.agent.tracing import begin, clear, flush
 from app.services.memory_service import (
     get_history_messages,
     build_chat_context,
@@ -328,6 +330,7 @@ def chat_stream_api(
         contexts_sent = False
         ctx_meta = []  # 本次检索片段（幻觉检测用，P2.6）
         config = {"configurable": {"thread_id": session_id}}
+        collector = begin(uuid.uuid4().hex, session_id, user_id, req.question)
         # 新提问前：若该会话有挂起的人工确认断点（用户改主意/重新提问），放弃旧断点
         try:
             snap = agent_graph.get_state(config)
@@ -365,6 +368,10 @@ def chat_stream_api(
                             continue
                         answer += token
                         yield f"data: {_sse({'type': 'token', 'content': token})}\n\n"
+                    elif etype == "content_blocked":
+                        # 输出内容审核拦截：替换落库 answer + 通知前端（P2.6 安全治理）
+                        answer = "抱歉，该回答未通过内容安全审核，已拦截显示。"
+                        yield f"data: {_sse({'type': 'content_blocked', 'reason': payload.get('reason', ''), 'matched': payload.get('matched', '')})}\n\n"
             if not contexts_sent:
                 yield f"data: {_sse({'type': 'context', 'contexts': []})}\n\n"
         except Exception as e:
@@ -404,6 +411,11 @@ def chat_stream_api(
                     )
                 except Exception as e:
                     logger.warning(f"幻觉检测触发失败: {e}")
+        try:
+            flush(collector, db, session_id, user_id)
+        except Exception as e:
+            logger.warning(f"调试轨迹落库失败: {e}")
+        clear(session_id)
         yield f"data: {_sse({'type': 'done'})}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
@@ -456,6 +468,7 @@ def chat_confirm_api(
     def event_generator():
         answer = ""
         first_confirm_skipped = False  # 续流首次 tool_confirm 是当前确认的重放，跳过（避免前端重复弹卡）
+        collector = begin(uuid.uuid4().hex, req.session_id, user_id, "人工确认续流")
         try:
             for event in agent_graph.stream(Command(resume={"approved": req.approved}), config, stream_mode="custom"):
                 payload = event
@@ -487,6 +500,11 @@ def chat_confirm_api(
             ai_msg = ChatMessage(session_id=req.session_id, role="assistant", content=answer)
             db.add(ai_msg)
             db.commit()
+        try:
+            flush(collector, db, req.session_id, user_id)
+        except Exception as e:
+            logger.warning(f"调试轨迹落库失败: {e}")
+        clear(req.session_id)
         yield f"data: {_sse({'type': 'done'})}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")

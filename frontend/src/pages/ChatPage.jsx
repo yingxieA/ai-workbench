@@ -186,6 +186,11 @@ function ChatPage({ t, messages, setMessages, sessionId, setSessionId, loadingSe
             st.answer += data.content;
             scheduleRender();
           }
+          else if (data.type === 'content_blocked') {
+            // 输出内容审核拦截：覆盖已累积的流式内容
+            st.answer = '该回答未通过内容安全审核，已拦截显示。';
+            scheduleRender();
+          }
           else if (data.type === 'context') st.sources = data.contexts || [];
           else if (data.type === 'thinking') {
             st.toolSteps.push({ kind: 'thinking', tool: '思考', summary: data.content || '', error: null });
@@ -318,6 +323,9 @@ function ChatPage({ t, messages, setMessages, sessionId, setSessionId, loadingSe
             const data = JSON.parse(ev.data);
             if (data.type === 'token') {
               st.answer += data.content;
+              scheduleRender2();
+            } else if (data.type === 'content_blocked') {
+              st.answer = '该回答未通过内容安全审核，已拦截显示。';
               scheduleRender2();
             } else if (data.type === 'thinking') {
               st.toolSteps.push({ kind: 'thinking', tool: '思考', summary: data.content || '', error: null });

@@ -26,6 +26,7 @@ from app.api import (
     system_configs,
     memory_admin,
     feedbacks,
+    debug,
 )
 from app.services.news import generate_daily_news
 from app.database import engine, SessionLocal
@@ -106,6 +107,7 @@ app.add_middleware(
 
 # 路由
 app.include_router(documents.router)
+app.include_router(debug.router)
 app.include_router(chat.router)
 app.include_router(news.router)
 app.include_router(skills.router)

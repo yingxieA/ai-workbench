@@ -86,7 +86,10 @@ def tool_execute(state: AgentState) -> AgentState:
             _push_result(writer, name, False, None, f"工具不存在: {name}")
             continue
 
+        from app.agent.tracing import emit as _trace_emit
+
         args = _generate_args(name, spec, question)
+        _trace_emit(state, "tool_call", {"tool": name, "args": args})
         if args.get("__skip__"):
             results.append({"success": False, "tool": name, "result": None, "error": "工具不适用于当前问题（已跳过）"})
             _push_result(writer, name, False, None, "跳过：当前问题不需要该工具")
@@ -130,6 +133,16 @@ def tool_execute(state: AgentState) -> AgentState:
 
         r = execute_tool(name, args, ctx)
         results.append(r)
+        _trace_emit(
+            state,
+            "tool_result",
+            {
+                "tool": name,
+                "success": bool(r.get("success")),
+                "error": r.get("error"),
+                "result_summary": (str(r.get("result"))[:300] if r.get("success") else ""),
+            },
+        )
         _push_result(writer, name, r["success"], r.get("result"), r.get("error"))
 
     return {"tool_results": results, "tool_confirm_pending": False}

@@ -141,6 +141,7 @@ def super_router(state: AgentState) -> AgentState:
     route, confidence, detail = "rag", 0.0, "knowledge_qa"
     tools: list[str] = []
     info = {"model_used": None}
+    text: str | None = None
     try:
         text, info = chat_complete(
             [
@@ -200,8 +201,18 @@ def super_router(state: AgentState) -> AgentState:
         "router_model": info.get("model_used"),
         "tool_calls": tools,
     }
+    from app.agent.tracing import emit as _trace_emit
+
+    _trace_emit(
+        state,
+        "route",
+        {"route": route, "detail": detail, "confidence": round(confidence, 2), "tools": tools},
+        model=info.get("model_used"),
+    )
+    _trace_emit(state, "route_raw", {"raw": (text or "")[:2000], "route": route}, model=info.get("model_used"))
     try:
         writer({"type": "route", **result})
+        writer({"type": "route_raw", "raw": (text or "")[:2000], "route": route, "model": info.get("model_used")})
     except Exception:
         pass  # 无流式消费者时忽略
     return result

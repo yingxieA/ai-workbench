@@ -3,7 +3,8 @@
 四道关卡（全确定性，0 模型调用）：
     ① 敏感词过滤   —— AC 自动机思路（正则 union），命中高危 → 拒绝 + 审计
     ② 长度校验     —— 空 / 过短（指令白名单续上轮）/ 过长 → 追问或提示
-    ③ 垃圾流量过滤 —— 用户维度频率（Redis，进程内兜底）+ 重复 + URL 堆砌 + Prompt 注入特征
+    ③ 垃圾流量过滤 —— 用户维度频率（Redis，进程内兜底）+ 重复 + URL 堆砌
+    ③.5 Prompt 注入防护 —— guardrails.injection_check（独立安全层：直接注入 / 泄露探测）
     ④ 规则匹配     —— DB 话术库（intent_rules）：精确 → 正则 → 关键词，命中直接应答
 
 三层递进：
@@ -163,14 +164,7 @@ def spam_check(question: str, user_id: str, history: list[dict]) -> dict:
     urls = _URL_RE.findall(question)
     if len(urls) >= 3:
         return {"verdict": "reject", "reply": "检测到大量链接，请一次只发一个链接或问题。", "detail": "url_spam"}
-    # Prompt 注入特征
-    for pat in _COMPILED_INJECTIONS:
-        if pat.search(question):
-            return {
-                "verdict": "reject",
-                "reply": "抱歉，该问题无法处理（检测到异常指令）。",
-                "detail": "prompt_injection",
-            }
+    # Prompt 注入特征 → 已拆分为独立安全层（guardrails.injection_check，见 prefilter() 主流程）
     return {"verdict": "pass", "reply": None, "detail": "ok"}
 
 
@@ -386,6 +380,33 @@ def prefilter(question: str, user_id: str, history: list[dict]) -> PrefilterResu
             user_id,
             "prefilter_reject",
             {"layer": "spam", "detail": sc["detail"], "question": question, "latency_ms": r.latency_ms},
+        )
+        return r
+
+    # ③.5 Prompt 注入防护（独立安全层，可配置开关）
+    from app.agent.guardrails import injection_check
+
+    inj = injection_check(question, user_id)
+    if inj["verdict"] == "reject":
+        r = PrefilterResult(
+            "reject",
+            "抱歉，该问题无法处理（检测到异常指令）。",
+            "injection",
+            1.0,
+            inj["detail"],
+        )
+        r.latency_ms = int((time.time() - t0) * 1000)
+        r.matched = {"matched": inj.get("matched", "")}
+        _audit(
+            user_id,
+            "prefilter_reject",
+            {
+                "layer": "injection",
+                "detail": r.detail,
+                "matched": inj.get("matched", ""),
+                "question": question,
+                "latency_ms": r.latency_ms,
+            },
         )
         return r
 

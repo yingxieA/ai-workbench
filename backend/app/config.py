@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     PREFILTER_LIGHT_ENABLED: bool = False  # L2 轻量模型闲聊分类（默认关；开启需 DASHSCOPE key）
     PREFILTER_LIGHT_MODEL: str = "qwen-turbo"
 
+    # 安全护栏（安全治理）：Prompt 注入防护 + 输出内容审核
+    GUARDRAIL_INJECTION_ENABLED: bool = True  # 输入侧注入检测（可被 system_configs 覆盖）
+    GUARDRAIL_OUTPUT_ENABLED: bool = True  # 输出侧内容审核（可被 system_configs 覆盖）
+
     class Config:
         env_file = ".env"
 

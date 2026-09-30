@@ -161,13 +161,14 @@ export function KeywordModal({ open, onClose }) {
     if (res.ok) { message.success('已删除'); fetchAll(); }
   };
 
-  const catColor = { sensitive: 'red', classify: 'blue' };
+  const catColor = { sensitive: 'red', abuse: 'volcano', classify: 'blue' };
+  const catLabel = { sensitive: '敏感词', abuse: '违规词', classify: '分类词' };
 
   return (
-    <Modal title="敏感词 / 分类关键词管理" open={open} onCancel={onClose} footer={null} width={720}>
+    <Modal title="敏感词 / 违规词 / 分类关键词管理" open={open} onCancel={onClose} footer={null} width={720}>
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
         <Select value={category} onChange={setCategory} style={{ width: 130 }}
-          options={[{ value: 'sensitive', label: '敏感词' }, { value: 'classify', label: '分类词' }]} />
+          options={[{ value: 'sensitive', label: '敏感词' }, { value: 'abuse', label: '违规词(输出审核)' }, { value: 'classify', label: '分类词' }]} />
         <Input placeholder="关键词，如：薪酬" value={keyword} onChange={e => setKeyword(e.target.value)}
           onPressEnter={add} style={{ flex: 1, minWidth: 160 }} />
         <Select value={level} onChange={setLevel} style={{ width: 120 }}
@@ -183,7 +184,7 @@ export function KeywordModal({ open, onClose }) {
         <Table rowKey={(r) => `${r.category}-${r.keyword}`} size="small" loading={loading} dataSource={items}
           pagination={false}
           columns={[
-            { title: '类别', dataIndex: 'category', width: 90, render: v => <Tag color={catColor[v]}>{v === 'sensitive' ? '敏感词' : '分类词'}</Tag> },
+            { title: '类别', dataIndex: 'category', width: 110, render: v => <Tag color={catColor[v] || 'default'}>{catLabel[v] || v}</Tag> },
             { title: '关键词', dataIndex: 'keyword' },
             { title: '命中等级', dataIndex: 'level', width: 120, render: v => <Tag color={v === 'secret' ? 'red' : v === 'internal' ? 'blue' : 'green'}>{v}</Tag> },
             { title: '状态', dataIndex: 'enabled', width: 80, render: v => (v ? <Tag color="green">启用</Tag> : <Tag>禁用</Tag>) },

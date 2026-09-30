@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Table, Tag, Switch, Button, Modal, Form, Input, InputNumber, Select, Tooltip, Popconfirm, message, Space, Alert } from 'antd';
-import { PlusOutlined, ReloadOutlined, ThunderboltOutlined, ExperimentOutlined } from '@ant-design/icons';
+import { PlusOutlined, ReloadOutlined, ThunderboltOutlined, ExperimentOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
 import { authFetch } from '../utils/api';
 
 const API = import.meta.env.VITE_API_BASE;
@@ -27,6 +27,8 @@ export default function IntentRulesPage() {
   const [form] = Form.useForm();
   const [testing, setTesting] = useState(null);
   const [lightEnabled, setLightEnabled] = useState(false);
+  const [injEnabled, setInjEnabled] = useState(true);
+  const [outEnabled, setOutEnabled] = useState(true);
 
   const fetchRules = async () => {
     setLoading(true);
@@ -47,6 +49,10 @@ export default function IntentRulesPage() {
       .then(data => {
         const item = (data.items || []).find(c => c.key === 'prefilter_light_enabled');
         if (item) setLightEnabled(item.value === 'true');
+        const inj = (data.items || []).find(c => c.key === 'guardrail_injection_enabled');
+        if (inj) setInjEnabled(inj.value === 'true');
+        const out = (data.items || []).find(c => c.key === 'guardrail_output_enabled');
+        if (out) setOutEnabled(out.value === 'true');
       })
       .catch(() => {});
   }, []);
@@ -96,6 +102,19 @@ export default function IntentRulesPage() {
       setLightEnabled(!enabled);
       message.error('更新失败：' + e.message);
     }
+  };
+
+  const handleToggleGuardrail = async (key, enabled, label) => {
+    try {
+      const res = await authFetch(`${API}/api/system-configs`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key, value: enabled ? 'true' : 'false', description: label }),
+      });
+      const data = await res.json();
+      if (data.ok) message.success(`${label}已${enabled ? '开启' : '关闭'}（热更新生效）`);
+      else message.error(data.detail || '更新失败');
+    } catch (e) { message.error('更新失败：' + e.message); }
   };
 
   const handleToggle = async (record, enabled) => {
@@ -197,6 +216,39 @@ export default function IntentRulesPage() {
           <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 2 }}>
             开启后：规则未命中的短闲聊（≤30 字）由 qwen-turbo 分类，判定为闲聊则直接应答、不消耗主模型；模型失败自动降级放行。
             关闭后：闲聊直接放行进图由主模型回答。
+          </div>
+        </div>
+      </div>
+
+      <div className="card" style={{ marginBottom: 16, padding: '14px 16px' }}>
+        <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 10 }}>
+          <SafetyCertificateOutlined style={{ marginRight: 6, color: 'var(--accent-color)' }} />
+          安全护栏（Prompt 注入防护 + 输出内容审核）
+        </div>
+        <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 320 }}>
+            <Switch checked={injEnabled} onChange={(v) => { setInjEnabled(v); handleToggleGuardrail('guardrail_injection_enabled', v, '输入侧 Prompt 注入防护'); }} />
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
+                输入侧 Prompt 注入防护
+                <Tag color={injEnabled ? 'green' : 'default'} style={{ marginLeft: 8, borderRadius: 6 }}>{injEnabled ? '已开启' : '已关闭'}</Tag>
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 2 }}>
+                检测"忽略指令 / 越狱 / 扮演系统管理员 / 泄露 system prompt"等注入，命中直接拦截并审计；单独讨论 system prompt 不误伤
+              </div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 320 }}>
+            <Switch checked={outEnabled} onChange={(v) => { setOutEnabled(v); handleToggleGuardrail('guardrail_output_enabled', v, '输出内容审核'); }} />
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
+                输出内容审核
+                <Tag color={outEnabled ? 'green' : 'default'} style={{ marginLeft: 8, borderRadius: 6 }}>{outEnabled ? '已开启' : '已关闭'}</Tag>
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 2 }}>
+                模型回答生成后复核：敏感词 / 违规词（词库可加）/ 注入回写特征，命中替换为拦截提示并审计
+              </div>
+            </div>
           </div>
         </div>
       </div>

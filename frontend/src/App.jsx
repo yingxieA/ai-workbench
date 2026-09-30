@@ -5,7 +5,7 @@ import {
   HomeOutlined, MessageOutlined, NotificationOutlined,
   GithubOutlined, BulbOutlined, RocketOutlined,
   UserOutlined, LogoutOutlined, FileTextOutlined, MoreOutlined, EnvironmentOutlined, AuditOutlined, AppstoreOutlined,
-  DatabaseOutlined, BarChartOutlined
+  DatabaseOutlined, BarChartOutlined, BugOutlined
 } from '@ant-design/icons';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import useAppStore from './store/useAppStore';
@@ -23,6 +23,7 @@ import MemoryPage from './pages/MemoryPage';
 import QualityCenterPage from './pages/QualityCenterPage';
 import ToolsPage from './pages/ToolsPage';
 import IntentRulesPage from './pages/IntentRulesPage';
+import DebuggerPage from './pages/DebuggerPage';
 import { authHeaders, authFetch } from './utils/api';
 import './App.css';
 
@@ -30,7 +31,7 @@ const i18n = {
   zh: {
     'nav.dashboard': '工作台总览', 'nav.chat': '智能问答', 'nav.news': 'AI 日报', 'nav.github': 'GitHub 周榜',
     'nav.skills': '技能管理', 'nav.learning': '学习路径', 'nav.docs': '文档管理', 'nav.travel': '旅游规划',
-    'nav.users': '用户管理', 'nav.audit': '审计日志', 'nav.tools': '工具管理', 'nav.intents': '固定话术', 'nav.memories': '记忆管理', 'nav.quality': '质量中心',
+    'nav.users': '用户管理', 'nav.audit': '审计日志', 'nav.tools': '工具管理', 'nav.intents': '固定话术', 'nav.memories': '记忆管理', 'nav.quality': '质量中心', 'nav.debug': '调试面板',
     'app.title': 'AI 工作台', 'app.subtitle': '学习 · 问答 · 资讯',
     'chat.placeholder': '输入问题，回车发送', 'chat.send': '发送', 'chat.title': '智能问答',
     'chat.empty': '开始对话吧', 'chat.thinking': '思考中...',
@@ -41,7 +42,7 @@ const i18n = {
   en: {
     'nav.dashboard': 'Dashboard', 'nav.chat': 'Chat', 'nav.news': 'AI News', 'nav.github': 'GitHub Trending',
     'nav.skills': 'Skills', 'nav.learning': 'Learning Path', 'nav.docs': 'Documents',
-    'nav.users': 'Users', 'nav.audit': 'Audit Logs', 'nav.tools': 'Tools', 'nav.intents': 'Intent Rules', 'nav.memories': 'Memories', 'nav.quality': 'Quality Center',
+    'nav.users': 'Users', 'nav.audit': 'Audit Logs', 'nav.tools': 'Tools', 'nav.intents': 'Intent Rules', 'nav.memories': 'Memories', 'nav.quality': 'Quality Center', 'nav.debug': 'Debugger',
     'app.title': 'AI Workbench', 'app.subtitle': 'Learn · Chat · News',
     'chat.placeholder': 'Type your question...', 'chat.send': 'Send', 'chat.title': 'AI Chat',
     'chat.empty': 'Start a conversation', 'chat.thinking': 'Thinking...',
@@ -295,6 +296,7 @@ function App() {
       { key: 'intents', icon: <MessageOutlined />, label: t('nav.intents') },
       { key: 'memories', icon: <DatabaseOutlined />, label: t('nav.memories') },
       { key: 'quality', icon: <BarChartOutlined />, label: t('nav.quality') },
+      { key: 'debug', icon: <BugOutlined />, label: t('nav.debug') },
     ] : []),
   ];
 
@@ -436,6 +438,7 @@ function App() {
             <Route path="/intents" element={isAdmin ? <IntentRulesPage /> : <Navigate to="/chat" replace />} />
             <Route path="/memories" element={isAdmin ? <MemoryPage /> : <Navigate to="/chat" replace />} />
             <Route path="/quality" element={isAdmin ? <QualityCenterPage /> : <Navigate to="/chat" replace />} />
+            <Route path="/debug" element={isAdmin ? <DebuggerPage /> : <Navigate to="/chat" replace />} />
             <Route path="/skills" element={<SkillsPage t={t} />} />
             <Route path="/learning" element={<LearningPage />} />
             <Route path="/github" element={<GitHubPage t={t} />} />

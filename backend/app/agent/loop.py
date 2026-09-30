@@ -286,6 +286,22 @@ def loop_decide(state: AgentState) -> AgentState:
             f"loop_decide: step={step}, done={done}, tool={tool}, "
             f"model={info.get('model_used')}, latency={info.get('latency_ms')}ms"
         )
+        from app.agent.tracing import emit as _trace_emit
+
+        _trace_emit(
+            state,
+            "loop_decide",
+            {
+                "step": step,
+                "done": done,
+                "tool": tool,
+                "args": args,
+                "reasoning": reasoning,
+                "raw": (text or "")[:1500],
+            },
+            model=info.get("model_used"),
+            latency_ms=info.get("latency_ms"),
+        )
         result = {
             "loop_done": done,
             "loop_reasoning": reasoning,
@@ -412,5 +428,20 @@ def loop_execute(state: AgentState) -> AgentState:
     else:
         entry["error"] = r.get("error") or "执行失败"
         _push(writer, {"type": "tool_result", "tool": tool, "success": False, "summary": "", "error": entry["error"]})
+    from app.agent.tracing import emit as _trace_emit
+
+    _trace_emit(
+        state,
+        "tool_result",
+        {
+            "tool": tool,
+            "step": step,
+            "success": bool(r.get("success")),
+            "error": r.get("error"),
+            "retried": entry.get("retried") or False,
+            "fallback_to": entry.get("fallback_to"),
+            "result_summary": (entry.get("result") or "")[:300],
+        },
+    )
     trace.append(entry)
     return {"loop_trace": trace, "loop_step": step, "loop_pending_tool": None, "loop_pending_args": None}

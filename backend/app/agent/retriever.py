@@ -283,6 +283,19 @@ def rag_retrieve(state) -> dict:
         }
         for i, item in enumerate(filtered)
     ]
+    from app.agent.tracing import emit as _trace_emit
+
+    _trace_emit(
+        state,
+        "retrieve",
+        {
+            "query": retrieve_query,
+            "recall": len(rows),
+            "reranked": len(reranked_with_meta),
+            "filtered": len(filtered),
+            "titles": [m["title"] for m in contexts_meta],
+        },
+    )
     result = {"contexts": contexts, "contexts_meta": contexts_meta}
     try:
         writer({"type": "contexts", **result})

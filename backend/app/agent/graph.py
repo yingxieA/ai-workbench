@@ -142,7 +142,7 @@ def _route_after_decide(state: AgentState) -> str:
     return "loop_execute"
 
 
-def build_graph(force_rag: bool = False):
+def build_graph(force_rag: bool = False, debug: bool = False):
     builder = StateGraph(AgentState)
 
     # 测评模式（force_rag=True）：跳过 LLM 意图识别，隔离测检索+生成
@@ -174,11 +174,28 @@ def build_graph(force_rag: bool = False):
     builder.add_edge("generate", "audit")
     builder.add_edge("audit", END)
 
+    if debug:
+        # 调试模式：关键节点前打断（interrupt_before），前端"继续"后从断点续跑（P2 真断点单步）
+        #   super_router → rag_retrieve → tool_execute → agent_loop_entry → loop_decide → loop_execute → generate
+        return builder.compile(
+            checkpointer=_checkpointer,
+            interrupt_before=[
+                "super_router",
+                "rag_retrieve",
+                "tool_execute",
+                "agent_loop_entry",
+                "loop_decide",
+                "loop_execute",
+                "generate",
+            ],
+        )
     return builder.compile(checkpointer=_checkpointer)
 
 
 # 进程内单例图（生产链路）
 agent_graph = build_graph()
+# 调试专用图（P2 单步调试：interrupt_before 关键节点，前端逐步确认）
+debug_graph = build_graph(debug=True)
 # 测评专用图（跳过 LLM router，隔离测检索/生成，供 eval_runner 使用）
 eval_graph = build_graph(force_rag=True)
 logger.info("LangGraph agent 图构建完成（生产图 + 测评图，含 tool 分支 + 人工确认断点）")

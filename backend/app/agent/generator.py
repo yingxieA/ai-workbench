@@ -103,6 +103,34 @@ def generate(state: AgentState) -> AgentState:
             f"生成完成: route={state.get('route')}, model={info.get('model_used')}, fallback={info.get('fallback_triggered')}, "
             f"tokens={info.get('token_usage')}, latency={info.get('latency_ms')}ms"
         )
+
+        # 输出内容审核（P2.6 安全治理）：敏感词 / 违规词 / 注入回写特征 → 命中替换为拦截提示
+        from app.agent.guardrails import output_audit
+
+        audit = output_audit(answer)
+        if audit["verdict"] == "block":
+            logger.warning(f"输出内容审核拦截: {audit['detail']} matched={audit.get('matched')}")
+            answer = "抱歉，该回答未通过内容安全审核，已拦截显示。"
+            try:
+                writer({"type": "content_blocked", "reason": audit["detail"], "matched": audit.get("matched", "")})
+            except Exception:
+                pass
+        from app.agent.tracing import emit as _trace_emit
+
+        _trace_emit(
+            state,
+            "generate",
+            {
+                "route": state.get("route", "rag"),
+                "answer_len": len(answer),
+                "fallback_triggered": bool(info.get("fallback_triggered")),
+                "error_type": info.get("error_type"),
+            },
+            model=info.get("model_used"),
+            latency_ms=info.get("latency_ms"),
+            cost=info.get("cost"),
+        )
+        _trace_emit(state, "final", {"answer": answer[:300]})
         return {
             "answer": answer,
             "model_used": info.get("model_used"),
