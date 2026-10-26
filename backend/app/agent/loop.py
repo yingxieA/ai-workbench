@@ -20,22 +20,65 @@ from __future__ import annotations
 import json
 import re
 import time
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 
 from langgraph.errors import GraphInterrupt
 from langgraph.types import interrupt
 
-from app.agent.llm import chat_complete
+import asyncio
+
+from app.agent.llm import achat_complete
 from app.agent.state import AgentState
 from app.agent.tools.registry import ToolContext, registry, RISK_HIGH
-from app.agent.tools.executor import execute_tool
+from app.agent.cancels import is_cancelled, make_cancel_check, run_cancellable
+from app.agent.tools.executor import aexecute_tool
 from app.agent.tools.validation import safe_truncate, validate_arguments
+from app.services.system_configs import get_config
 from app.utils.logger import get_logger
 
 logger = get_logger("agent_loop")
 
-# ── 循环控制参数（可配置化：后续挪 yaml / 数据库热更）──────────────────
+# ── 循环控制参数（可配置化：system_configs.agent_loop_max_steps 热更新覆盖）──
 MAX_STEPS = 6  # 最大推理步数（防死循环，第一道防线）
+
+
+def get_max_steps() -> int:
+    """步数上限读取层：配置优先，解析失败回退默认"""
+    return _get_int_cfg("agent_loop_max_steps", MAX_STEPS)
+
+
+def _get_int_cfg(key: str, default: int) -> int:
+    """循环控制参数读取层：配置优先（>=0），解析失败回退默认"""
+    raw = get_config(key, "")
+    if raw:
+        try:
+            v = int(raw)
+            if v >= 0:
+                return v
+        except Exception:
+            pass
+    return default
+
+
+def get_step_llm_timeout() -> int:
+    """单步 LLM 决策整体超时（秒）"""
+    return _get_int_cfg("agent_loop_step_llm_timeout", STEP_LLM_TIMEOUT)
+
+
+def get_tool_timeout() -> int:
+    """单次工具执行超时（秒）"""
+    return _get_int_cfg("agent_loop_tool_timeout", TOOL_TIMEOUT)
+
+
+def get_tool_retry() -> int:
+    """工具失败自动重试次数"""
+    return _get_int_cfg("agent_loop_tool_retry", TOOL_RETRY)
+
+
+def get_loop_total_timeout() -> int:
+    """整轮循环总时长上限（秒）"""
+    return _get_int_cfg("agent_loop_total_timeout", LOOP_TOTAL_TIMEOUT)
+
+
 STEP_LLM_TIMEOUT = 40  # 单步 LLM 决策整体超时（秒）。模型链底层各档已 15/20s，
 # 此为整链兜底（3 档全卡最坏 ~60s 时强制接管）
 TOOL_TIMEOUT = 30  # 单次工具执行超时（秒）
@@ -71,8 +114,9 @@ _RETRYABLE_MARKERS = (
 _DECIDE_PROMPT = """你是多步推理 Agent。用户的任务可能包含多个子步骤，你必须逐个执行、全部完成才能结束。
 
 关键规则（务必遵守）：
-1. 先识别用户问题中的所有子任务（"查一下…再算一下…"、"先…然后…"、"对比"、"基于以上结果…"等），每步决策在 reasoning 里先写下"子任务清单"（如 1.查天气 2.查路线 3.对比），然后核对：只要还有未执行的子任务，done 必须为 false。
+1. 先识别用户问题中的所有子任务（"查一下…再算一下…"、"先…然后…"、"对比"、"基于以上结果…"等），每步决策在 reasoning 里先写下"子任务清单"（如 1.查天气 2.查路线 3.对比），然后核对：只要还有未执行的子任务，done 必须为 false。**目标聚焦（极其重要）**：只拆解用户明确要求的子任务；用户没提到的子目标不得自行扩展——例如用户只问"今天天气"，就不要规划景点、路线、出行建议等额外步骤；只问时间就不要查其他信息。
 2. 不要靠模型心算日期、数字、实时信息、网页内容——这些必须调用工具获取。
+3. 搜索后浏览正文：当 web_search 的结果标题/摘要表明某页面含关键数据（训练成本、基准分、版本号、具体日期、开源协议等）时，下一步应调用 web_fetch 打开 1-2 个最重要的页面，从中提取具体数字与事实，再组织回答——不要只凭标题和摘要泛泛而谈。
 3. 不要重复调用同一个工具且参数完全一样（上一步已成功取到的结果直接用）；执行失败的步骤要换工具或换参数重试，不要带着失败结果直接 done。
 4. 每一步必须选择能推进"尚未完成子任务"的工具；不要反复获取已完成的子任务结果。
 5. 全部子任务执行完毕、信息齐全后，才设置 done=true 交给最终回答。
@@ -130,6 +174,46 @@ def _push(writer, payload: dict) -> None:
         pass
 
 
+def _push_progress(writer, tool: str, result) -> None:
+    """搜索/浏览类工具成功后实时推进度 thinking（对齐 DeepSeek「搜索到 N 个网页 / 浏览了 M 个页面」）。
+
+    按工具结果结构探测：
+    - web_search：results 数组 → "已搜索到 N 个网页"
+    - web_fetch / http_request：单页 url/title → "已浏览：标题"
+    - 其余工具不推（避免噪音）
+    """
+    if tool not in ("web_search", "web_fetch", "http_request"):
+        return
+    try:
+        rr = result or {}
+        if isinstance(rr, dict) and isinstance(rr.get("results"), list):
+            n = len(rr["results"])
+            _push(
+                writer,
+                {
+                    "type": "thinking",
+                    "step_kind": "action",
+                    "tool": tool,
+                    "content": f"已搜索到 {n} 个网页",
+                    "url": None,
+                },
+            )
+        elif isinstance(rr, dict) and (rr.get("url") or rr.get("title")):
+            title = str(rr.get("title") or rr.get("url") or "")[:60]
+            _push(
+                writer,
+                {
+                    "type": "thinking",
+                    "step_kind": "action",
+                    "tool": tool,
+                    "content": f"已浏览：{title}",
+                    "url": rr.get("url"),
+                },
+            )
+    except Exception:
+        pass
+
+
 def _get_writer():
     """安全获取流 writer：非 LangGraph 运行上下文（单测/脚本直调）时返回 no-op"""
     try:
@@ -151,22 +235,14 @@ def _is_retryable(err: str) -> bool:
     return any(m in low for m in _RETRYABLE_MARKERS)
 
 
-def _call_with_timeout(fn, timeout: float, default_error: str) -> dict:
-    """把任意同步调用包上超时（线程池 + future.result(timeout)）。
+def _call_with_timeout(fn, timeout: float, default_error: str, sid: str = "", epoch: int | None = None) -> dict:
+    """把任意同步调用包上可取消的超时执行（1s 分片轮询 + 取消检查，P0）。
 
-    超时后线程仍在后台运行（同步世界无法强杀），但主流程立即返回超时错误，
-    由循环控制接管（重试 / 降级 / 兜底），不会阻塞整轮推理。
+    - 主流程每秒检查 is_cancelled：被打断立即返回「已取消」，不等线程自然结束
+    - 超时后线程仍在后台运行（同步世界无法强杀），但主流程立即返回超时错误，
+      由循环控制接管（重试 / 降级 / 兜底），不会阻塞整轮推理
     """
-    pool = ThreadPoolExecutor(max_workers=1)
-    fut = pool.submit(fn)
-    try:
-        return fut.result(timeout=timeout)
-    except FutureTimeout:
-        return {"success": False, "tool": "?", "result": None, "error": default_error}
-    except Exception as e:
-        return {"success": False, "tool": "?", "result": None, "error": f"{default_error}: {str(e)[:120]}"}
-    finally:
-        pool.shutdown(wait=False)  # 不等待后台线程，避免超时后仍被阻塞
+    return run_cancellable(fn, timeout, default_error, sid=sid, epoch=epoch)
 
 
 # ── 循环控制辅助 ───────────────────────────────────────────────────
@@ -201,7 +277,7 @@ def _terminate(writer, reason: str, friendly: str) -> dict:
 # ── 节点实现 ─────────────────────────────────────────────────────
 
 
-def agent_loop_entry(state: AgentState) -> AgentState:
+async def agent_loop_entry(state: AgentState) -> AgentState:
     """初始化循环轨迹（新任务从第 0 步开始；resume 场景保留已有轨迹 + 起始时间）"""
     return {
         "loop_trace": state.get("loop_trace") or [],
@@ -213,18 +289,21 @@ def agent_loop_entry(state: AgentState) -> AgentState:
     }
 
 
-def loop_decide(state: AgentState) -> AgentState:
+async def loop_decide(state: AgentState) -> AgentState:
     """LLM 决策：done / 下一步工具 + 参数（前置四道防线检查）"""
+    _node_t0 = time.time()
     writer = _get_writer()
     question = state.get("question", "")
     trace = state.get("loop_trace") or []
     step = state.get("loop_step") or 0
+    logger.info(f"loop 决策开始: step={step} trace_len={len(trace)}")
 
-    # ① 步数上限防御：决策前先判，超限直接结束
-    if step >= MAX_STEPS:
+    # ① 步数上限防御：决策前先判，超限直接结束（上限可配置 agent_loop_max_steps）
+    max_steps = get_max_steps()
+    if step >= max_steps:
         return _terminate(
             writer,
-            f"达到步数上限 {MAX_STEPS}",
+            f"达到步数上限 {max_steps}",
             f"已尝试 {step} 步仍未完成全部子任务（达到步数上限），先基于已有结果回答",
         )
 
@@ -235,33 +314,40 @@ def loop_decide(state: AgentState) -> AgentState:
 
     # ② 整轮总时长熔断
     started = state.get("loop_started_at") or time.time()
-    if time.time() - started > LOOP_TOTAL_TIMEOUT:
+    loop_total = get_loop_total_timeout()
+    if time.time() - started > loop_total:
         return _terminate(
             writer,
-            f"整轮处理超时（>{LOOP_TOTAL_TIMEOUT}s）",
-            f"处理超时（超过 {LOOP_TOTAL_TIMEOUT} 秒），先返回已完成的中间结果",
+            f"整轮处理超时（>{loop_total}s）",
+            f"处理超时（超过 {loop_total} 秒），先返回已完成的中间结果",
         )
 
     prompt = (
         _DECIDE_PROMPT.replace("{trajectory}", _trajectory_text(trace))
         .replace("{step}", str(step))
-        .replace("{max_steps}", str(MAX_STEPS))
+        .replace("{max_steps}", str(get_max_steps()))
         .replace("{tools_summary}", registry.summary())
         .replace("{question}", question)
     )
     result: dict = {"loop_done": True, "loop_reasoning": "", "tool": None, "args": None}
     try:
-        # ④ 单步 LLM 整体超时兜底（模型链底层各档 15/20s，此为整链 40s 强制接管）
-        text, info = _call_with_timeout(
-            lambda: chat_complete(
-                [
-                    {"role": "system", "content": prompt},
-                    {"role": "user", "content": question},
-                ]
-            ),
-            STEP_LLM_TIMEOUT,
-            f"模型决策超时（>{STEP_LLM_TIMEOUT}s）",
-        )
+        # ④ 单步 LLM 整体超时兜底（整链超时 asyncio.wait_for 协程级真杀；取消直接冒泡）
+        try:
+            text, info = await asyncio.wait_for(
+                achat_complete(
+                    [
+                        {"role": "system", "content": prompt},
+                        {"role": "user", "content": question},
+                    ],
+                    sid=state.get("session_id", ""),
+                    epoch=state.get("epoch"),
+                ),
+                timeout=get_step_llm_timeout(),
+            )
+        except asyncio.TimeoutError:
+            text, info = None, {}
+        except asyncio.CancelledError:
+            raise  # 方案 B：打断 → 整步真杀，交还图/调用方收尾
         if not text:
             return _terminate(writer, "模型决策超时", "模型决策超时，先基于已有结果回答")
 
@@ -275,6 +361,20 @@ def loop_decide(state: AgentState) -> AgentState:
             if not (isinstance(tool, str) and registry.get(tool)):
                 done = True
                 reasoning = "未选择合法工具，直接回答"
+        # 决策层查重：与轨迹中已成功执行过的 (工具, 参数) 完全相同 → 不重复执行，直接结束（防 LLM 反复调同一工具）
+        if not done and isinstance(tool, str) and args is not None:
+            _args_sig = json.dumps(args, sort_keys=True, ensure_ascii=False)
+            _duplicated = any(
+                t.get("tool") == tool
+                and json.dumps(t.get("args") or {}, sort_keys=True, ensure_ascii=False) == _args_sig
+                and not t.get("error")
+                for t in trace
+            )
+            if _duplicated:
+                done = True
+                tool = None
+                args = None
+                reasoning = "该工具与参数已成功执行过，结果可直接使用，无需重复调用"
         _push(
             writer,
             {
@@ -316,22 +416,43 @@ def loop_decide(state: AgentState) -> AgentState:
     return result
 
 
-def _execute_one(tool: str, args: dict, ctx: ToolContext, timeout: float) -> dict:
-    """单次带超时的工具执行，返回统一结果结构"""
-    r = _call_with_timeout(lambda: execute_tool(tool, args, ctx), timeout, f"工具执行超时（>{timeout}s）")
+async def _execute_one(tool: str, args: dict, ctx: ToolContext, timeout: float, epoch: int | None = None) -> dict:
+    """单次带超时的工具执行（方案 B：aexecute_tool + wait_for 协程级真杀），返回统一结果结构"""
+    if ctx.session_id and is_cancelled(ctx.session_id, epoch):
+        return {"success": False, "tool": tool, "result": None, "error": "已取消", "cancelled": True}
+    try:
+        r = await asyncio.wait_for(aexecute_tool(tool, args, ctx), timeout=timeout)
+    except asyncio.TimeoutError:
+        r = {"success": False, "tool": tool, "result": None, "error": f"工具执行超时（>{timeout}s）"}
+    except asyncio.CancelledError:
+        raise  # 方案 B：取消直接冒泡
     r["tool"] = tool
     return r
 
 
-def loop_execute(state: AgentState) -> AgentState:
+async def loop_execute(state: AgentState) -> AgentState:
     """执行上一步决策的工具：校验 → 高风险人工确认 → 执行（超时+重试+降级）→ 写入轨迹"""
+    _node_t0 = time.time()
     writer = _get_writer()
     question = state.get("question", "")
     tool = state.get("loop_pending_tool")
     args = state.get("loop_pending_args") or {}
     trace = list(state.get("loop_trace") or [])
     step = (state.get("loop_step") or 0) + 1  # 本次执行记为第 step 步
-    ctx = ToolContext(user_id=state.get("user_id"), session_id=state.get("session_id"), question=question)
+    ctx = ToolContext(
+        user_id=state.get("user_id"),
+        session_id=state.get("session_id"),
+        question=question,
+        epoch=state.get("epoch"),
+        cancel_check=make_cancel_check(state.get("session_id", ""), state.get("epoch")),
+    )
+    merged_meta: list | None = None  # 本轮 web 类工具结果汇总的引用来源（无则保持 None）
+    logger.info(f"loop 执行开始: step={step} tool={tool}")
+
+    # 打断检查：新请求到达（打断模式标记）→ 立即结束循环，尽快释放会话锁
+    if is_cancelled(state.get("session_id", ""), state.get("epoch")):
+        logger.info(f"loop 执行被新请求打断: session={state.get('session_id')}")
+        return {"loop_trace": trace, "loop_step": step, "loop_pending_tool": None, "loop_pending_args": None}
 
     if not tool:
         return {"loop_step": step, "loop_pending_tool": None, "loop_pending_args": None}
@@ -342,6 +463,24 @@ def loop_execute(state: AgentState) -> AgentState:
         entry["error"] = f"工具不存在: {tool}"
         trace.append(entry)
         _push(writer, {"type": "tool_result", "tool": tool, "success": False, "summary": "", "error": entry["error"]})
+        return {"loop_trace": trace, "loop_step": step, "loop_pending_tool": None, "loop_pending_args": None}
+
+    # 终极防线：联网开关关闭时，agent_loop 内部决策选中的联网类工具一律不执行
+    _opts = state.get("options") or {}
+    if not bool(_opts.get("web_search", True)) and tool in ("web_search", "web_fetch", "http_request"):
+        entry["error"] = "联网搜索已关闭，工具已跳过"
+        trace.append(entry)
+        _push(
+            writer,
+            {
+                "type": "thinking",
+                "step_kind": "action",
+                "tool": tool,
+                "content": f"联网搜索已关闭，跳过工具「{tool}」",
+                "url": None,
+            },
+        )
+        logger.info(f"联网搜索开关关闭，loop 跳过联网工具: {tool}")
         return {"loop_trace": trace, "loop_step": step, "loop_pending_tool": None, "loop_pending_args": None}
 
     # 参数校验（防注入）
@@ -380,13 +519,18 @@ def loop_execute(state: AgentState) -> AgentState:
             )
             return {"loop_trace": trace, "loop_step": step, "loop_pending_tool": None, "loop_pending_args": None}
 
-    # 执行：超时保护 + 自动重试 + 备选工具降级
-    r = _execute_one(tool, args, ctx, TOOL_TIMEOUT)
+    # 执行：超时保护 + 自动重试 + 备选工具降级（全部走可取消分片轮询）
+    _epoch = state.get("epoch")
+    r = await _execute_one(tool, args, ctx, get_tool_timeout(), epoch=_epoch)
     if not r["success"] and _is_retryable(r["error"]):
-        # 自动重试（最多 TOOL_RETRY 次；已确认过的 high 工具不重复确认）
-        for attempt in range(TOOL_RETRY):
-            time.sleep(0.5)  # 短暂退避
-            logger.info(f"工具 {tool} 失败，自动重试 {attempt + 1}/{TOOL_RETRY}: {r['error']}")
+        # 自动重试（最多 get_tool_retry() 次；已确认过的 high 工具不重复确认）
+        tool_retry = get_tool_retry()
+        for attempt in range(tool_retry):
+            if is_cancelled(state.get("session_id", ""), state.get("epoch")):
+                logger.info("工具重试退避被打断（取消）")
+                break  # 打断：不再重试，尽快收尾
+            await asyncio.sleep(0.5)  # B5：async sleep 可被 task.cancel 即时中断（真取消）
+            logger.info(f"工具 {tool} 失败，自动重试 {attempt + 1}/{tool_retry}: {r['error']}")
             _push(
                 writer,
                 {
@@ -397,7 +541,7 @@ def loop_execute(state: AgentState) -> AgentState:
                     "error": f"{r['error']}（自动重试中…）",
                 },
             )
-            r = _execute_one(tool, args, ctx, TOOL_TIMEOUT)
+            r = await _execute_one(tool, args, ctx, get_tool_timeout(), epoch=_epoch)
             if r["success"]:
                 entry["retried"] = True
                 break
@@ -407,21 +551,52 @@ def loop_execute(state: AgentState) -> AgentState:
                 if not registry.get(fb):
                     continue
                 logger.info(f"工具 {tool} 降级为 {fb}")
-                _push(writer, {"type": "thinking", "content": f"{tool} 不可用，改用 {fb} 获取"})
-                r = _execute_one(fb, args, ctx, TOOL_TIMEOUT)
+                _push(
+                    writer,
+                    {
+                        "type": "thinking",
+                        "step_kind": "action",
+                        "tool": tool,
+                        "content": f"{tool} 不可用，改用 {fb} 获取",
+                        "url": None,
+                    },
+                )
+                r = await _execute_one(fb, args, ctx, get_tool_timeout(), epoch=_epoch)
                 entry["fallback_to"] = fb
                 if r["success"]:
                     break
 
     if r["success"]:
         entry["result"] = safe_truncate(str(r.get("result")), 800)
+        # web 类工具结果 → 引用来源（对齐 DeepSeek：多轮搜索也在「引用来源」展示，编号全局累加）
+        try:
+            from app.agent.tools_node import build_web_sources
+
+            _srcs = build_web_sources([{"success": True, "result": r.get("result")}])
+            if _srcs:
+                _prev = list(state.get("contexts_meta") or [])
+                _base = len(_prev)
+                for _i, _src in enumerate(_srcs):
+                    _src["index"] = _base + _i + 1
+                _prev.extend(_srcs)
+                _push(writer, {"type": "contexts", "contexts_meta": _prev})
+                merged_meta = _prev
+        except Exception as _e:
+            logger.error(f"loop 引用来源汇总失败: {_e}")
+        # 多步进度展示：搜索/浏览类工具成功后实时推 thinking（对齐 DeepSeek「搜索到 N 个网页 / 浏览了 M 个页面」）
+        _push_progress(writer, tool, r.get("result"))
+        # 摘要压缩：web_search 等带 results 列表的工具只显示条数，明细交给「引用来源」Drawer
+        if isinstance(r.get("result"), dict) and isinstance(r.get("result").get("results"), list):
+            _summary = f"已检索到 {len(r['result']['results'])} 条结果（详见引用来源）"
+        else:
+            _summary = safe_truncate(str(r.get("result")), 300)
         _push(
             writer,
             {
                 "type": "tool_result",
                 "tool": tool,
                 "success": True,
-                "summary": safe_truncate(str(r.get("result")), 300),
+                "summary": _summary,
                 "error": None,
             },
         )
@@ -444,4 +619,11 @@ def loop_execute(state: AgentState) -> AgentState:
         },
     )
     trace.append(entry)
-    return {"loop_trace": trace, "loop_step": step, "loop_pending_tool": None, "loop_pending_args": None}
+    logger.info(
+        f"loop 执行完成: step={step} tool={tool} success={r.get('success')} latency={int((time.time() - _node_t0) * 1000)}ms"
+        + (f" error={str(r.get('error'))[:100]}" if not r.get("success") else "")
+    )
+    _ret = {"loop_trace": trace, "loop_step": step, "loop_pending_tool": None, "loop_pending_args": None}
+    if merged_meta is not None:
+        _ret["contexts_meta"] = merged_meta
+    return _ret

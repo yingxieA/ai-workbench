@@ -5,6 +5,7 @@
 - 导出：复核通过的标注数据 → JSONL 训练集（供微调/评测）
 """
 
+from app.core.errors import ErrorCode
 import json
 import io
 from fastapi import APIRouter, Depends, HTTPException, Response
@@ -68,6 +69,7 @@ def list_feedbacks(
                 "user_id": s.user_id,
                 "role": m.role,
                 "content": m.content[:2000],
+                "source": m.source or "agent",  # prefilter（前置过滤固定话术）/ agent（正常回答），P2 误杀率交叉统计
                 "feedback": m.feedback,
                 "feedback_reason": m.feedback_reason or "",
                 "review_status": m.review_status or "pending",
@@ -233,7 +235,7 @@ def review_feedback(
         raise HTTPException(status_code=400, detail=f"status 应为 {REVIEW_STATUSES}")
     m = db.query(ChatMessage).filter(ChatMessage.id == message_id).first()
     if not m or m.feedback is None:
-        raise HTTPException(status_code=404, detail="反馈不存在")
+        raise HTTPException(status_code=404, detail=(ErrorCode.FEEDBACK_NOT_FOUND, "反馈不存在"))
     m.review_status = req.status
     _audit(db, admin, "review_feedback", {"message_id": message_id, "feedback": m.feedback, "status": req.status})
     db.commit()

@@ -17,6 +17,24 @@ const fbLabel = { like: ['点赞', 'green'], dislike: ['点踩', 'red'] };
 const reviewLabel = { pending: ['待复核', 'orange'], approved: ['已通过', 'green'], rejected: ['已驳回', 'default'] };
 const routeLabel = { direct: ['直接回答', 'blue'], rag: ['知识库 RAG', 'geekblue'], tool: ['工具调用', 'purple'], agent_loop: ['多步推理', 'cyan'] };
 const verdictLabel = { supported: ['有支撑', 'green'], partially: ['部分支撑', 'orange'], unsupported: ['无支撑', 'red'] };
+const MODEL_COLORS = { 'qwen-max': 'blue', 'qwen-plus': 'cyan', 'qwen-turbo': 'geekblue', 'deepseek': 'purple', 'deepseek-chat': 'purple', 'gpt-4o': 'gold' };
+const needsMd = (text) => /(\*\*|##|```|`|\[.*\]\(.*\)|^\s*[-*] |^\s*\d+\. )/.test(String(text || ''));
+// 表格内 Markdown 预览：含 md 语法才渲染，否则纯文本（零额外开销）
+function MdPreview({ text, maxHeight = 46 }) {
+  if (!text) return <span style={{ color: 'var(--text-tertiary)' }}>-</span>;
+  if (!needsMd(text)) {
+    return (
+      <span style={{ display: 'block', overflow: 'hidden', fontSize: 12, lineHeight: 1.55, color: 'var(--text-secondary)' }}>
+        {text.length > 90 ? text.slice(0, 90) + '…' : text}
+      </span>
+    );
+  }
+  return (
+    <div style={{ maxHeight, overflow: 'hidden', fontSize: 12, lineHeight: 1.55, color: 'var(--text-secondary)' }}>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={MarkdownComponents}>{text}</ReactMarkdown>
+    </div>
+  );
+}
 
 const fmtTime = (v) => {
   if (!v) return '-';
@@ -77,7 +95,7 @@ export default function QualityCenterPage() {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status }),
       });
-      if (!res.ok) throw new Error((await res.json()).detail || '复核失败');
+      if (!res.ok) throw new Error(extractError(await res.json(), '复核失败'));
       message.success(status === 'approved' ? '已标记为通过（可导出训练集）' : status === 'rejected' ? '已驳回' : '已恢复待定');
       fetchFeedbacks(page);
     } catch (e) { message.error(e.message); }
@@ -149,7 +167,7 @@ export default function QualityCenterPage() {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ key, value: String(value), description: key === 'daily_cost_limit' ? '日成本预算（元）' : '成本超限自动降级开关' }),
       });
-      if (!res.ok) throw new Error((await res.json()).detail || '保存失败');
+      if (!res.ok) throw new Error(extractError(await res.json(), '保存失败'));
       message.success('成本配置已更新，即时生效');
       fetchCosts();
     } catch (e) { message.error(e.message); }
@@ -172,7 +190,9 @@ export default function QualityCenterPage() {
         return <Tag color={color} style={{ margin: 0, borderRadius: 6 }}>{label}</Tag>;
       },
     },
-    { title: '模型', dataIndex: 'model_used', width: 110, render: v => v ? <Tag style={{ borderRadius: 6, fontFamily: 'monospace', margin: 0 }}>{v}</Tag> : '-' },
+    { title: '模型', dataIndex: 'model_used', width: 120, render: v => v
+      ? <Tag color={MODEL_COLORS[v] || 'default'} icon={<RobotOutlined />} style={{ borderRadius: 6, fontFamily: 'monospace', margin: 0 }}>{v}</Tag>
+      : '-' },
     {
       title: '问题 / 回答', key: 'content', render: (_, r) => (
         <div style={{ maxWidth: 460 }}>
@@ -182,11 +202,18 @@ export default function QualityCenterPage() {
               <Tooltip title={r.session_title} placement="topLeft">{r.session_title || '·'}</Tooltip>
             </span>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <span style={{ fontSize: 11, color: 'var(--text-tertiary)', background: 'var(--bg-secondary)', padding: '1px 6px', borderRadius: 4, flexShrink: 0 }}>答</span>
-            <span style={{ fontSize: 12, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              <Tooltip title={r.content} placement="topLeft" overlayStyle={{ maxWidth: 480 }}>{r.content || '-'}</Tooltip>
-            </span>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
+            <span style={{ fontSize: 11, color: 'var(--text-tertiary)', background: 'var(--bg-secondary)', padding: '1px 6px', borderRadius: 4, flexShrink: 0, marginTop: 2 }}>答</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <MdPreview text={r.content} />
+              {r.content && String(r.content).length > 90 && (
+                <div style={{ marginTop: 2 }}>
+                  <Tooltip title={r.content} placement="topLeft" overlayStyle={{ maxWidth: 520 }}>
+                    <span style={{ fontSize: 11, color: 'var(--accent-color)', cursor: 'pointer' }}>查看全文…</span>
+                  </Tooltip>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       ),
@@ -243,8 +270,9 @@ export default function QualityCenterPage() {
     {
       title: '回答 / 片段', key: 'qa', render: (_, r) => (
         <div style={{ maxWidth: 440, fontSize: 12 }}>
-          <div style={{ color: 'var(--text-primary)', marginBottom: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            <b>回答</b>：{r.answer ? <Tooltip title={r.answer} placement="topLeft" overlayStyle={{ maxWidth: 480 }}>{r.answer.slice(0, 80)}{r.answer.length > 80 ? '…' : ''}</Tooltip> : '-'}
+          <div style={{ color: 'var(--text-primary)', marginBottom: 4 }}>
+            <b style={{ color: 'var(--accent-color)' }}>回答</b>
+            <div style={{ marginTop: 2 }}><MdPreview text={r.answer} maxHeight={46} /></div>
           </div>
           <div style={{ color: 'var(--text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             <b>片段</b>：<ContentCell text={r.contexts} max={90} />

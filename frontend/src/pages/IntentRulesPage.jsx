@@ -72,10 +72,10 @@ export default function IntentRulesPage() {
         form.resetFields();
         fetchRules();
       } else {
-        message.error(data.detail || '保存失败');
+        message.error(extractError(data, '保存失败'));
       }
     } catch (e) {
-      if (e?.response) message.error(e.response.detail || '保存失败');
+      if (e?.response) message.error(extractError(e.response, '保存失败'));
     }
   };
 
@@ -96,7 +96,7 @@ export default function IntentRulesPage() {
         message.success(enabled ? '已开启 L2：短闲聊将由 qwen-turbo 直接应答（热更新生效）' : '已关闭 L2：闲聊放行主模型（热更新生效）');
       } else {
         setLightEnabled(!enabled);
-        message.error(data.detail || '更新失败');
+        message.error(extractError(data, '更新失败'));
       }
     } catch (e) {
       setLightEnabled(!enabled);
@@ -113,7 +113,7 @@ export default function IntentRulesPage() {
       });
       const data = await res.json();
       if (data.ok) message.success(`${label}已${enabled ? '开启' : '关闭'}（热更新生效）`);
-      else message.error(data.detail || '更新失败');
+      else message.error(extractError(data, '更新失败'));
     } catch (e) { message.error('更新失败：' + e.message); }
   };
 
@@ -127,7 +127,7 @@ export default function IntentRulesPage() {
     if (data.ok) {
       message.success(enabled ? '已启用，立即生效' : '已停用');
       fetchRules();
-    } else message.error(data.detail || '操作失败');
+    } else message.error(extractError(data, '操作失败'));
   };
 
   const handleDelete = async (record) => {
@@ -138,7 +138,7 @@ export default function IntentRulesPage() {
     });
     const data = await res.json();
     if (data.ok) message.success('已删除（软删）');
-    else message.error(data.detail || '删除失败');
+    else message.error(extractError(data, '删除失败'));
     fetchRules();
   };
 

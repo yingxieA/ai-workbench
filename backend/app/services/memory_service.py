@@ -18,6 +18,7 @@ from sqlalchemy import text
 
 from app.database import SessionLocal
 from app.utils.logger import get_logger
+from app.core.redis_client import get_redis
 
 logger = get_logger("memory_service")
 
@@ -47,26 +48,6 @@ def redis_cache_enabled() -> bool:
 
 # ---------- Redis 热缓存（会话恢复快读） ----------
 
-_redis = None
-_REDIS_OK = False
-
-
-def _get_redis():
-    global _redis, _REDIS_OK
-    if _redis is not None:
-        return _redis
-    try:
-        import redis as redis_lib
-        from app.config import settings
-
-        _redis = redis_lib.Redis.from_url(settings.REDIS_URL, decode_responses=True)
-        _redis.ping()
-        _REDIS_OK = True
-    except Exception as e:
-        logger.warning(f"Redis 不可用，会话缓存降级: {e}")
-        _redis = False
-    return _redis if _REDIS_OK else None
-
 
 _CACHE_TTL = 1800  # 30 分钟活跃会话
 
@@ -79,7 +60,7 @@ def cache_put_history(session_id: str, messages: list[dict]) -> None:
     """写历史热缓存（裁剪到窗口轮数，只缓存最近窗口）"""
     if not redis_cache_enabled():
         return
-    r = _get_redis()
+    r = get_redis()
     if not r:
         return
     try:
@@ -94,7 +75,7 @@ def cache_get_history(session_id: str) -> list[dict] | None:
     """读历史热缓存；miss 返回 None（调用方回源 PG）"""
     if not redis_cache_enabled():
         return None
-    r = _get_redis()
+    r = get_redis()
     if not r:
         return None
     try:
@@ -109,7 +90,7 @@ def cache_get_history(session_id: str) -> list[dict] | None:
 
 
 def cache_invalidate(session_id: str) -> None:
-    r = _get_redis()
+    r = get_redis()
     if not r:
         return
     try:
@@ -127,11 +108,19 @@ def load_history_from_pg(session_id: str, limit: int = 50) -> list[dict]:
     try:
         rows = db.execute(
             text(
-                "SELECT role, content FROM chat_messages WHERE session_id=:sid AND is_deleted=FALSE ORDER BY created_at DESC LIMIT :lim"
+                "SELECT role, content, created_at FROM chat_messages WHERE session_id=:sid AND is_deleted=FALSE ORDER BY created_at DESC LIMIT :lim"
             ),
             {"sid": session_id, "lim": limit},
         ).fetchall()
-        msgs = [{"role": r[0], "content": r[1]} for r in reversed(rows)]
+        # time=epoch 秒：供 spam_check 内容重复做时间窗口判定；旧缓存无该字段时兼容处理
+        msgs = [
+            {
+                "role": r[0],
+                "content": r[1],
+                "time": r[2].timestamp() if r[2] is not None else None,
+            }
+            for r in reversed(rows)
+        ]
         return msgs
     except Exception as e:
         logger.warning(f"读取 PG 历史失败: {e}")

@@ -14,6 +14,9 @@
 | `seed_eval_docs.py` | 注入测试知识库（4 份业务文档） |
 | `cleanup_eval_docs.py` | 清理测试文档 |
 | `eval_report_*.json` | 每次运行生成的报告 |
+| `run_eval_ci.py` | **P2 CI 门禁封装**：跑 full + 基线回归 + 绝对阈值（路由准确率 < 85% 退出码 1） |
+| `feedback_route_stats.py` | **P2 差评率×路由交叉统计**：在线 up/down 按 route 分组，定位质量最差路由 |
+| `calibrate_confidence.py` | **P1.7 置信度离线校准**：按置信度分桶统计路由准确率，生成校准表 |
 
 ## 用例体系（30 条，10 类）
 
@@ -233,3 +236,71 @@ RERANK_TOP_K = 5        # 重排后条数
 | 回答出现编造数字 | 真幻觉 | 检查检索到的上下文是否有该数字；若没有，考虑调低 `SCORE_THRESHOLD` 或优化 prompt |
 | 路由总把业务问题判成 direct | router prompt 没覆盖该业务类型 | 在 `router.py` 的 `ROUTER_SYSTEM_PROMPT` 补规则 |
 | 每次跑都重新加载 bge-m3（15s+） | 每个 python 进程独立加载 | 正常现象；生产 uvicorn 进程内是单例复用，不影响线上 |
+
+---
+
+## 九、P2：路由质量门禁（CI 接入）与差评率交叉统计
+
+### 9.1 路由准确率 CI 门禁
+
+`run_eval_ci.py` 封装两层门禁：
+1. **回归门禁**：与上一份 `eval_report.json` 基线对比，路由准确率退化 → 退出码 1（eval_runner `--baseline` 内置）；
+2. **绝对阈值**：路由准确率 < `EVAL_MIN_ACCURACY`（默认 0.85）→ 退出码 1。
+
+`powershell
+# 本地/CI 运行
+& "C:\Users\18701\.conda\envs\ai-workbench\python.exe" "D:\study\ai_study\proj\ai-workbench\backend\scripts\eval\run_eval_ci.py"
+
+# 首次运行（无基线）跳过回归对比
+& "C:\Users\18701\.conda\envs\ai-workbench\python.exe" "D:\study\ai_study\proj\ai-workbench\backend\scripts\eval\run_eval_ci.py" --skip-baseline
+
+# 自定义阈值
+\ = "0.80"
+`
+
+**GitHub Actions 接入示例**（`.github/workflows/route-eval.yml`）：
+`yaml
+on: [push, pull_request]
+jobs:
+  route-eval:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          python scripts/eval/run_eval_ci.py
+`
+> Windows 计划任务同样适用：把 `run_eval_ci.py` 设为计划任务，非零退出码即告警。
+
+### 9.2 差评率 × 路由交叉统计
+
+`feedback_route_stats.py` 从 `/api/feedbacks` 拉取全部在线反馈（up/down），按 `route_path` 分组统计差评率并落盘 `feedback_route_stats.json`。用于定位"哪个路由的答案质量最差"（tool 分支答非所问 / rag 分支答不对题等）。
+
+`powershell
+# 全量统计（需后端 8000 在跑 + admin 账号）
+& "C:\Users\18701\.conda\envs\ai-workbench\python.exe" "D:\study\ai_study\proj\ai-workbench\backend\scripts\eval\feedback_route_stats.py"
+
+# 只看近 30 天
+& "C:\Users\18701\.conda\envs\ai-workbench\python.exe" "D:\study\ai_study\proj\ai-workbench\backend\scripts\eval\feedback_route_stats.py" --days 30
+`
+
+### 9.3 置信度离线校准（P1.7）
+
+`calibrate_confidence.py` 基于评测报告按置信度分桶统计"桶内路由准确率"，若 LLM 自报置信度显著高估（gap>0.10 且准确率<0.85）则生成校准表：
+
+`powershell
+# 仅打印建议（不改配置）
+& "C:\Users\18701\.conda\envs\ai-workbench\python.exe" "D:\study\ai_study\proj\ai-workbench\backend\scripts\eval\calibrate_confidence.py"
+
+# 写入 system_configs.router_confidence_calibration（需后端 DB 可达）
+& "C:\Users\18701\.conda\envs\ai-workbench\python.exe" "D:\study\ai_study\proj\ai-workbench\backend\scripts\eval\calibrate_confidence.py" --apply
+`
+
+校准表格式 `lo-hi:adj,...`（如 `0.7-0.9:0.75`），由 `router._load_calibration()` 读取、`_calibrated_confidence()` 在低置信兜底判断前应用。
+
+### 9.4 新增配置 key（router 配置化收敛，P1.5/1.6/1.7）
+
+| key | 格式 | 默认值（代码回退） | 作用 |
+|---|---|---|---|
+| `router_kb_signals` | 逗号分隔词表 | 售后,退货,换货,政策,… | 知识库专属信号词表（_kb_signal） |
+| `router_forced_tool_order` | 逗号分隔有序 | date_calculator,calculator,get_current_time,web_search | 强意图工具优先级 |
+| `router_confidence_calibration` | `lo-hi:adj,...` | 空（不校准） | 置信度校准表 |

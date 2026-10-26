@@ -240,10 +240,9 @@ def _indent(code: str) -> str:
 
 
 def _redis():
-    import redis
-    from app.config import settings
+    from app.core.redis_client import get_redis
 
-    return redis.Redis.from_url(settings.REDIS_URL, decode_responses=True, socket_timeout=3)
+    return get_redis()  # 统一单例：不再每次调用新建连接（旧实现每请求一个连接对象）
 
 
 def _mem_key(ctx: ToolContext, key: str) -> str:

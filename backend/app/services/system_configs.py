@@ -11,20 +11,10 @@ from sqlalchemy import text
 
 from app.database import SessionLocal
 from app.utils.logger import get_logger
+from app.core.redis_client import get_redis, redis_ok
 
 logger = get_logger("system_configs")
 
-try:
-    import redis as redis_lib
-    from app.config import settings
-
-    _redis = redis_lib.Redis.from_url(settings.REDIS_URL, decode_responses=True)
-    _redis.ping()
-    REDIS_OK = True
-except Exception as e:
-    logger.warning(f"Redis 不可用，系统配置缓存降级为进程内缓存: {e}")
-    _redis = None
-    REDIS_OK = False
 
 _mem_cache: dict[str, str] = {}
 _mem_lock = threading.Lock()
@@ -48,9 +38,9 @@ def _read_all_from_db() -> dict[str, str]:
 def get_configs(refresh: bool = False) -> dict[str, str]:
     """读取全部配置（Redis 缓存优先）"""
     if not refresh:
-        if REDIS_OK:
+        if redis_ok():
             try:
-                cached = _redis.get(_CACHE_KEY)
+                cached = get_redis().get(_CACHE_KEY)
                 if cached:
                     return json.loads(cached)
             except Exception:
@@ -60,9 +50,9 @@ def get_configs(refresh: bool = False) -> dict[str, str]:
                 return dict(_mem_cache)
 
     result = _read_all_from_db()
-    if REDIS_OK:
+    if redis_ok():
         try:
-            _redis.setex(_CACHE_KEY, _CACHE_TTL, json.dumps(result, ensure_ascii=False))
+            get_redis().setex(_CACHE_KEY, _CACHE_TTL, json.dumps(result, ensure_ascii=False))
         except Exception:
             pass
     with _mem_lock:
@@ -106,9 +96,9 @@ def set_config(key: str, value: str, description: str = "", updated_by: str = ""
         db.close()
 
     # 热更新：删 Redis 缓存 + 清空进程内整体缓存（get_configs 优先读整体缓存，只 pop 单 key 会读到旧值）
-    if REDIS_OK:
+    if redis_ok():
         try:
-            _redis.delete(_CACHE_KEY)
+            get_redis().delete(_CACHE_KEY)
         except Exception:
             pass
     with _mem_lock:

@@ -1,5 +1,6 @@
 """用户管理接口（仅管理员）：用户列表 / 角色等级 / 启用禁用"""
 
+from app.core.errors import ErrorCode
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -90,12 +91,15 @@ def set_role_level(
 ):
     """修改用户角色等级（admin）：10 普通 / 50 高级 / 100 管理员"""
     if req.role_level not in ALLOWED_LEVELS:
-        raise HTTPException(status_code=400, detail="等级仅支持 10 / 50 / 100")
+        raise HTTPException(status_code=400, detail=(ErrorCode.USER_LEVEL_INVALID, "等级仅支持 10 / 50 / 100"))
     if user_id == admin.id:
-        raise HTTPException(status_code=400, detail="不能修改自己的权限等级（防止唯一超管被降权）")
+        raise HTTPException(
+            status_code=400,
+            detail=(ErrorCode.USER_SELF_DEMOTE_FORBIDDEN, "不能修改自己的权限等级（防止唯一超管被降权）"),
+        )
     user = db.query(User).filter(User.id == user_id, User.is_deleted == False).first()
     if not user:
-        raise HTTPException(status_code=404, detail="用户不存在")
+        raise HTTPException(status_code=404, detail=(ErrorCode.USER_NOT_FOUND, "用户不存在"))
 
     old_level = user.role_level or 10
     user.role_level = req.role_level
@@ -120,12 +124,12 @@ def set_user_status(
 ):
     """启用 / 禁用用户（admin）：禁用后该用户无法登录与调用接口"""
     if req.status not in ALLOWED_STATUS:
-        raise HTTPException(status_code=400, detail="状态仅支持 active / disabled")
+        raise HTTPException(status_code=400, detail=(ErrorCode.USER_STATUS_INVALID, "状态仅支持 active / disabled"))
     if user_id == admin.id:
-        raise HTTPException(status_code=400, detail="不能禁用自己的账号")
+        raise HTTPException(status_code=400, detail=(ErrorCode.USER_SELF_DISABLE_FORBIDDEN, "不能禁用自己的账号"))
     user = db.query(User).filter(User.id == user_id, User.is_deleted == False).first()
     if not user:
-        raise HTTPException(status_code=404, detail="用户不存在")
+        raise HTTPException(status_code=404, detail=(ErrorCode.USER_NOT_FOUND, "用户不存在"))
 
     old_status = user.status or "active"
     user.status = req.status

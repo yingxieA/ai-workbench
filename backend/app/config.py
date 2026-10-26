@@ -33,6 +33,11 @@ class Settings(BaseSettings):
     # CORS
     CORS_ORIGINS: str = "http://localhost:5173"
 
+    # 认证（P0：SECRET_KEY 生产必须通过环境变量/.env 注入，缺省仅用于本地开发）
+    SECRET_KEY: str = ""
+    JWT_ISSUER: str = "ai-workbench"
+    JWT_AUDIENCE: str = "ai-workbench-api"
+
     # Apify
     APIFY_API_KEY: str = ""
 
@@ -40,8 +45,18 @@ class Settings(BaseSettings):
     PREFILTER_RATE_LIMIT: int = 20  # 用户维度：时间窗内最大提问次数
     PREFILTER_RATE_WINDOW: int = 60  # 秒
     PREFILTER_MAX_LEN: int = 2000  # 问题最大长度（超出提示精简）
+    PREFILTER_DUP_WINDOW: int = (
+        300  # 内容重复判定时间窗口（秒）：窗口内相同提问才算 spam，窗口外重问放行（防"永远不能重问"）
+    )
     PREFILTER_LIGHT_ENABLED: bool = False  # L2 轻量模型闲聊分类（默认关；开启需 DASHSCOPE key）
     PREFILTER_LIGHT_MODEL: str = "qwen-turbo"
+    PREFILTER_INJECTION_LIGHT_ENABLED: bool = (
+        True  # P1：注入检测轻量模型二次判定（仅含弱注入特征才触发，条件触发成本低）
+    )
+    PREFILTER_INJECTION_LIGHT_MODEL: str = "qwen-turbo"
+    PREFILTER_OUTPUT_AUDIT_STREAMING: bool = True  # P0：输出审核流式分段（命中即中断，默认开）
+    PREFILTER_OUTPUT_AUDIT_CHUNK: int = 200  # P0：每累积多少字符审一次（越小拦截越快，成本略增）
+    PREFILTER_AC_ENABLED: bool = True  # 敏感词/违规词检测用 AC 自动机（pyahocorasick）；库缺失自动回退正则 union
 
     # 安全护栏（安全治理）：Prompt 注入防护 + 输出内容审核
     GUARDRAIL_INJECTION_ENABLED: bool = True  # 输入侧注入检测（可被 system_configs 覆盖）

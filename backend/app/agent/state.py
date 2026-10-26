@@ -12,12 +12,18 @@ class AgentState(TypedDict, total=False):
     session_id: str
     user_id: str
     started_at: float  # 请求开始时间戳（耗时统计）
+    options: dict  # 前端功能开关（chat.py 注入：{"web_search": bool, "deep_think": bool}）——必须在 schema 声明，否则 LangGraph 丢弃导致 web_on 恒为默认 True
+    epoch: int  # 请求代际（P1 乐观并发：新请求递增，旧代际 token/落库前检查过期作废；checkpointer thread_id=f"{session_id}:{epoch}" 隔离）
+    interrupted: bool  # 本代际是否被新请求打断（标准化中断状态，P1；旧图退出时标记，供落库校验/告警）
 
     # 路由结果（super_router 节点输出）
     route: str  # direct | rag | tool | agent_loop
     route_detail: str  # direct: chitchat|llm_common；rag: knowledge_qa；tool: tool_call；agent_loop: multi_step
     confidence: float  # 0.0 - 1.0
     router_model: str  # 路由器使用的模型
+    question_resolved: (
+        str  # P0.1: 代指/省略句补全后的完整问题（router 覆盖 state.question 时的原始补全值，供审计/落库区分）
+    )
 
     # 工具分支（route=tool）
     tool_calls: list[str]  # Router 选定的工具名列表

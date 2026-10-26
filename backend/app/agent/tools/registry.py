@@ -22,10 +22,19 @@ RISK_HIGH = "high"
 class ToolContext:
     """工具执行上下文：调用方注入，handler 可按需使用"""
 
-    def __init__(self, user_id: str | None = None, session_id: str | None = None, question: str = ""):
+    def __init__(
+        self,
+        user_id: str | None = None,
+        session_id: str | None = None,
+        question: str = "",
+        epoch: int | None = None,
+        cancel_check: Callable[[], bool] | None = None,
+    ):
         self.user_id = user_id
         self.session_id = session_id
         self.question = question
+        self.epoch = epoch  # P2：当前代际号（工具内部取消判定）
+        self.cancel_check = cancel_check  # P2：无参取消回调（handler 内部轮询：ctx.cancel_check()）
 
 
 @dataclass

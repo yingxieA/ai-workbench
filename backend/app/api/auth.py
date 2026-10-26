@@ -4,8 +4,9 @@ import uuid
 import hashlib
 import secrets
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from app.core.errors import ErrorCode
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import jwt
@@ -15,12 +16,18 @@ from app.database import get_db
 from app.models.user import User, RefreshToken
 from app.config import settings
 from app.utils.logger import get_logger
+from app.core.redis_client import get_redis, redis_ok
 
 logger = get_logger("auth")
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
-SECRET_KEY = "ai-workbench-secret-key-change-in-prod"
+# P0 密钥外置：生产必须在 .env/环境变量配置 SECRET_KEY；缺省仅限本地开发
+SECRET_KEY = settings.SECRET_KEY or "ai-workbench-dev-secret-change-in-prod"
+if not settings.SECRET_KEY:
+    logger.warning("SECRET_KEY 未配置，使用开发默认密钥——生产环境必须在 .env 设置 SECRET_KEY")
 ALGORITHM = "HS256"
+JWT_ISSUER = settings.JWT_ISSUER
+JWT_AUDIENCE = settings.JWT_AUDIENCE
 ACCESS_TOKEN_MINUTES = 15  # access token 短时效
 REFRESH_TOKEN_DAYS = 7  # refresh token 7 天
 MAX_LOGIN_FAILS = 5  # 连续失败锁定阈值
@@ -29,16 +36,6 @@ RATE_LIMIT_WINDOW = 60  # 秒
 RATE_LIMIT_MAX = 5  # 窗口内最大尝试
 
 # Redis 客户端（容错：Redis 不可用时降级为内存限流）
-try:
-    import redis as redis_lib
-
-    _redis = redis_lib.Redis.from_url(settings.REDIS_URL, decode_responses=True)
-    _redis.ping()
-    REDIS_OK = True
-except Exception as e:
-    logger.warning(f"Redis 不可用，限流降级为内存模式: {e}")
-    _redis = None
-    REDIS_OK = False
 
 _mem_attempts = {}  # 内存限流兜底
 
@@ -65,9 +62,13 @@ def is_legacy_hash(stored_hash: str) -> bool:
 
 
 def create_access_token(user_id: str) -> str:
+    """签发 access JWT：P1 标准声明 sub/jti/iss/aud/exp（解码时强制校验 iss/aud）"""
     payload = {
         "sub": user_id,
         "type": "access",
+        "jti": str(uuid.uuid4()),  # token 唯一 ID：重放/日志追踪锚点
+        "iss": JWT_ISSUER,
+        "aud": JWT_AUDIENCE,
         "exp": datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_MINUTES),
     }
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
@@ -87,11 +88,11 @@ def _rate_limit_key(kind: str, ip: str, username: str) -> str:
 def check_rate_limit(ip: str, username: str) -> bool:
     """登录限流：窗口内超过阈值返回 False"""
     key = _rate_limit_key("login", ip, username)
-    if REDIS_OK:
+    if redis_ok():
         try:
-            count = _redis.incr(key)
+            count = get_redis().incr(key)
             if count == 1:
-                _redis.expire(key, RATE_LIMIT_WINDOW)
+                get_redis().expire(key, RATE_LIMIT_WINDOW)
             return count <= RATE_LIMIT_MAX
         except Exception:
             pass
@@ -108,9 +109,9 @@ def check_rate_limit(ip: str, username: str) -> bool:
 
 def reset_rate_limit(ip: str, username: str):
     key = _rate_limit_key("login", ip, username)
-    if REDIS_OK:
+    if redis_ok():
         try:
-            _redis.delete(key)
+            get_redis().delete(key)
         except Exception:
             pass
     _mem_attempts.pop(key, None)
@@ -145,6 +146,37 @@ def _log_login(
         db.rollback()
 
 
+def _check_refresh_replay(db: Session, token_hash: str, ip: str = "") -> bool:
+    """P1.5 refresh 重放检测：已撤销/已过期的 refresh token 再次被提交 → 疑似泄漏。
+
+    命中时：审计告警（LoginLog reason=refresh_token_replay）+ 强制吊销该用户全部未撤销
+    refresh（攻击者持有的与用户当前持有的会话一并作废，强制重新登录）。
+    返回 True=检测到重放（调用方应立即 401）。
+    """
+    row = db.query(RefreshToken).filter(RefreshToken.token_hash == token_hash).first()
+    if row is None:
+        return False
+    now = datetime.utcnow()
+    _exp = row.expires_at
+    if _exp is not None and _exp.tzinfo is not None:
+        _exp = _exp.replace(tzinfo=None)  # 存量兼容：aware 旧数据剥时区 → naive UTC
+    if row.revoked_at is None and _exp > now:
+        return False  # 有效 token，正常轮换路径
+    # 已撤销 / 已过期 token 再次出现 → 疑似重放
+    logger.warning(f"refresh token 疑似重放: user={row.user_id} hash_prefix={token_hash[:12]} ip={ip}")
+    username = ""
+    user = db.query(User).filter(User.id == row.user_id, User.is_deleted == False).first()
+    if user:
+        username = user.username
+    _log_login(db, row.user_id, username, False, ip, "", "refresh_token_replay")
+    db.query(RefreshToken).filter(
+        RefreshToken.user_id == row.user_id,
+        RefreshToken.revoked_at.is_(None),
+    ).update({RefreshToken.revoked_at: now})
+    db.commit()
+    return True
+
+
 class RegisterRequest(BaseModel):
     username: str
     password: str
@@ -175,16 +207,16 @@ def register(req: RegisterRequest, db: Session = Depends(get_db)):
 
     # 校验
     if len(username) < 3 or len(username) > 20:
-        raise HTTPException(status_code=400, detail="用户名需 3-20 个字符")
+        raise HTTPException(status_code=400, detail=(ErrorCode.AUTH_USERNAME_INVALID, "用户名需 3-20 个字符"))
     if len(password) < 8:
-        raise HTTPException(status_code=400, detail="密码至少 8 位")
+        raise HTTPException(status_code=400, detail=(ErrorCode.AUTH_PASSWORD_WEAK, "密码至少 8 位"))
     if not (any(c.isalpha() for c in password) and any(c.isdigit() for c in password)):
-        raise HTTPException(status_code=400, detail="密码需同时包含字母和数字")
+        raise HTTPException(status_code=400, detail=(ErrorCode.AUTH_PASSWORD_WEAK, "密码需同时包含字母和数字"))
 
     if db.query(User).filter(User.username == username, User.is_deleted == False).first():
-        raise HTTPException(status_code=400, detail="用户名已存在")
+        raise HTTPException(status_code=400, detail=(ErrorCode.AUTH_USERNAME_EXISTS, "用户名已存在"))
     if email and db.query(User).filter(User.email == email, User.is_deleted == False).first():
-        raise HTTPException(status_code=400, detail="邮箱已被注册")
+        raise HTTPException(status_code=400, detail=(ErrorCode.AUTH_EMAIL_EXISTS, "邮箱已被注册"))
 
     user = User(
         id=str(uuid.uuid4()),
@@ -216,7 +248,7 @@ def _refresh_row(user_id: str, token_hash: str):
     return RefreshToken(
         user_id=user_id,
         token_hash=token_hash,
-        expires_at=datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_DAYS),
+        expires_at=datetime.utcnow() + timedelta(days=REFRESH_TOKEN_DAYS),
     )
 
 
@@ -235,19 +267,25 @@ def _user_payload(user: User) -> dict:
 def get_current_user(authorization: str = Header(""), db: Session = Depends(get_db)) -> User:
     """FastAPI 依赖：解析 JWT → 返回完整 User 对象（含 role_level）"""
     if not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="未登录")
+        raise HTTPException(status_code=401, detail=(ErrorCode.AUTH_NOT_LOGGED_IN, "未登录"))
     token = authorization.replace("Bearer ", "")
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(
+            token,
+            SECRET_KEY,
+            algorithms=[ALGORITHM],
+            audience=JWT_AUDIENCE,  # P1：强制校验 aud（防跨系统 token 混用）
+            issuer=JWT_ISSUER,  # P1：强制校验 iss（防伪造签发方）
+        )
     except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="登录已过期")
+        raise HTTPException(status_code=401, detail=(ErrorCode.AUTH_TOKEN_EXPIRED, "登录已过期"))
     except Exception:
-        raise HTTPException(status_code=401, detail="无效 token")
+        raise HTTPException(status_code=401, detail=(ErrorCode.AUTH_TOKEN_INVALID, "无效 token"))
     user = db.query(User).filter(User.id == payload["sub"], User.is_deleted == False).first()
     if not user:
-        raise HTTPException(status_code=401, detail="用户不存在")
+        raise HTTPException(status_code=401, detail=(ErrorCode.AUTH_USER_NOT_FOUND, "用户不存在"))
     if user.status != "active":
-        raise HTTPException(status_code=403, detail="账号已被禁用")
+        raise HTTPException(status_code=403, detail=(ErrorCode.AUTH_ACCOUNT_DISABLED, "账号已被禁用"))
     return user
 
 
@@ -256,7 +294,9 @@ def require_level(min_level: int = 100):
 
     def _dep(user: User = Depends(get_current_user)) -> User:
         if (user.role_level or 10) < min_level:
-            raise HTTPException(status_code=403, detail="权限不足：需要更高权限等级")
+            raise HTTPException(
+                status_code=403, detail=(ErrorCode.AUTH_PERMISSION_DENIED, "权限不足：需要更高权限等级")
+            )
         return user
 
     return _dep
@@ -270,18 +310,18 @@ def login(req: LoginRequest, request: Request, db: Session = Depends(get_db)):
     """登录：限流 → 锁定检查 → 密码校验（双轨）→ 签发双 token"""
     ip = request.client.host if request.client else "unknown"
     if not check_rate_limit(ip, req.username):
-        raise HTTPException(status_code=429, detail="尝试过于频繁，请 1 分钟后再试")
+        raise HTTPException(status_code=429, detail=(ErrorCode.AUTH_RATE_LIMITED, "尝试过于频繁，请 1 分钟后再试"))
 
     user = db.query(User).filter(User.username == req.username, User.is_deleted == False).first()
     if not user:
         _log_login(db, None, req.username, False, ip, "", "用户不存在")
-        raise HTTPException(status_code=401, detail="用户名或密码错误")
+        raise HTTPException(status_code=401, detail=(ErrorCode.AUTH_BAD_CREDENTIALS, "用户名或密码错误"))
 
     # 锁定检查
-    now = datetime.now(timezone.utc)
+    now = datetime.utcnow()
     if user.locked_until and user.locked_until > now:
         _log_login(db, user.id, user.username, False, ip, "", "账号已锁定")
-        raise HTTPException(status_code=423, detail="账号已锁定，请稍后再试")
+        raise HTTPException(status_code=423, detail=(ErrorCode.AUTH_ACCOUNT_LOCKED, "账号已锁定，请稍后再试"))
 
     if not verify_password(req.password, user.password_hash):
         user.failed_login_count = (user.failed_login_count or 0) + 1
@@ -292,16 +332,16 @@ def login(req: LoginRequest, request: Request, db: Session = Depends(get_db)):
             _log_login(db, user.id, user.username, False, ip, "", "连续失败已锁定")
             raise HTTPException(
                 status_code=423,
-                detail=f"连续失败 {MAX_LOGIN_FAILS} 次，账号锁定 {LOCK_MINUTES} 分钟",
+                detail=(ErrorCode.AUTH_ACCOUNT_LOCKED, f"连续失败 {MAX_LOGIN_FAILS} 次，账号锁定 {LOCK_MINUTES} 分钟"),
             )
         db.commit()
         _log_login(db, user.id, user.username, False, ip, "", "密码错误")
-        raise HTTPException(status_code=401, detail="用户名或密码错误")
+        raise HTTPException(status_code=401, detail=(ErrorCode.AUTH_BAD_CREDENTIALS, "用户名或密码错误"))
 
     # 成功：重置失败计数 + 升级旧哈希 + 记录登录时间
     user.failed_login_count = 0
     user.locked_until = None
-    user.last_login_at = datetime.now(timezone.utc)
+    user.last_login_at = datetime.utcnow()
     if is_legacy_hash(user.password_hash):
         user.password_hash = hash_password(req.password)  # 自动升级 bcrypt
     db.commit()
@@ -321,27 +361,30 @@ def login(req: LoginRequest, request: Request, db: Session = Depends(get_db)):
 
 
 @router.post("/refresh")
-def refresh(req: RefreshRequest, db: Session = Depends(get_db)):
-    """刷新 token：校验 refresh → 撤销旧 → 签发新双 token（轮换）"""
+def refresh(req: RefreshRequest, request: Request, db: Session = Depends(get_db)):
+    """刷新 token：重放检测 → 校验 refresh → 撤销旧 → 签发新双 token（轮换）"""
+    ip = request.client.host if request.client else "unknown"
     token_hash = hashlib.sha256(req.refresh_token.encode("utf-8")).hexdigest()
+    if _check_refresh_replay(db, token_hash, ip):
+        raise HTTPException(status_code=401, detail=(ErrorCode.AUTH_REFRESH_INVALID, "登录状态已失效，请重新登录"))
     row = (
         db.query(RefreshToken)
         .filter(
             RefreshToken.token_hash == token_hash,
             RefreshToken.revoked_at.is_(None),
-            RefreshToken.expires_at > datetime.now(timezone.utc),
+            RefreshToken.expires_at > datetime.utcnow(),
         )
         .first()
     )
     if not row:
-        raise HTTPException(status_code=401, detail="refresh token 无效或已过期")
+        raise HTTPException(status_code=401, detail=(ErrorCode.AUTH_REFRESH_INVALID, "refresh token 无效或已过期"))
 
     user = db.query(User).filter(User.id == row.user_id, User.is_deleted == False).first()
     if not user:
-        raise HTTPException(status_code=401, detail="用户不存在")
+        raise HTTPException(status_code=401, detail=(ErrorCode.AUTH_USER_NOT_FOUND, "用户不存在"))
 
     # 轮换：撤销旧 refresh
-    row.revoked_at = datetime.now(timezone.utc)
+    row.revoked_at = datetime.utcnow()
     db.commit()
 
     access_token = create_access_token(user.id)
@@ -357,7 +400,7 @@ def logout(req: RefreshRequest, db: Session = Depends(get_db)):
     token_hash = hashlib.sha256(req.refresh_token.encode("utf-8")).hexdigest()
     row = db.query(RefreshToken).filter(RefreshToken.token_hash == token_hash).first()
     if row and row.revoked_at is None:
-        row.revoked_at = datetime.now(timezone.utc)
+        row.revoked_at = datetime.utcnow()
         db.commit()
     return {"ok": True}
 
@@ -370,27 +413,35 @@ def change_password(
 ):
     """修改密码：校验旧密码 → 更新 → 撤销该用户全部 refresh（强制重新登录）"""
     if not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="未登录")
+        raise HTTPException(status_code=401, detail=(ErrorCode.AUTH_NOT_LOGGED_IN, "未登录"))
     token = authorization.replace("Bearer ", "")
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(
+            token,
+            SECRET_KEY,
+            algorithms=[ALGORITHM],
+            audience=JWT_AUDIENCE,  # P1：强制校验 aud（防跨系统 token 混用）
+            issuer=JWT_ISSUER,  # P1：强制校验 iss（防伪造签发方）
+        )
     except Exception:
-        raise HTTPException(status_code=401, detail="无效 token")
+        raise HTTPException(status_code=401, detail=(ErrorCode.AUTH_TOKEN_INVALID, "无效 token"))
 
     user = db.query(User).filter(User.id == payload["sub"], User.is_deleted == False).first()
     if not user:
-        raise HTTPException(status_code=401, detail="用户不存在")
+        raise HTTPException(status_code=401, detail=(ErrorCode.AUTH_USER_NOT_FOUND, "用户不存在"))
     if not verify_password(req.old_password, user.password_hash):
-        raise HTTPException(status_code=400, detail="旧密码错误")
+        raise HTTPException(status_code=400, detail=(ErrorCode.AUTH_OLD_PASSWORD_WRONG, "旧密码错误"))
     if len(req.new_password) < 8 or not (
         any(c.isalpha() for c in req.new_password) and any(c.isdigit() for c in req.new_password)
     ):
-        raise HTTPException(status_code=400, detail="新密码至少 8 位且包含字母和数字")
+        raise HTTPException(
+            status_code=400, detail=(ErrorCode.AUTH_NEW_PASSWORD_WEAK, "新密码至少 8 位且包含字母和数字")
+        )
 
     user.password_hash = hash_password(req.new_password)
     # 撤销所有 refresh token
     db.query(RefreshToken).filter(RefreshToken.user_id == user.id, RefreshToken.revoked_at.is_(None)).update(
-        {RefreshToken.revoked_at: datetime.now(timezone.utc)}
+        {RefreshToken.revoked_at: datetime.utcnow()}
     )
     db.commit()
     return {"ok": True}
@@ -399,15 +450,21 @@ def change_password(
 def get_current_user_id(authorization: str = Header("")) -> str:
     """FastAPI 依赖：从 Authorization header 解析当前用户 id"""
     if not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="未登录")
+        raise HTTPException(status_code=401, detail=(ErrorCode.AUTH_NOT_LOGGED_IN, "未登录"))
     token = authorization.replace("Bearer ", "")
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(
+            token,
+            SECRET_KEY,
+            algorithms=[ALGORITHM],
+            audience=JWT_AUDIENCE,  # P1：强制校验 aud（防跨系统 token 混用）
+            issuer=JWT_ISSUER,  # P1：强制校验 iss（防伪造签发方）
+        )
         return payload["sub"]
     except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="登录已过期")
+        raise HTTPException(status_code=401, detail=(ErrorCode.AUTH_TOKEN_EXPIRED, "登录已过期"))
     except Exception:
-        raise HTTPException(status_code=401, detail="无效 token")
+        raise HTTPException(status_code=401, detail=(ErrorCode.AUTH_TOKEN_INVALID, "无效 token"))
 
 
 @router.get("/me")

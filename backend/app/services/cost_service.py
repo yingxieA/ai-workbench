@@ -12,22 +12,12 @@ from datetime import datetime, timedelta, timezone
 from app.database import SessionLocal
 from app.services.system_configs import get_config, get_config_bool
 from app.utils.logger import get_logger
+from app.core.redis_client import get_redis, redis_ok
 
 logger = get_logger("cost_service")
 
 BJ_TZ = timezone(timedelta(hours=8))
 
-try:
-    import redis as redis_lib
-    from app.config import settings
-
-    _redis = redis_lib.Redis.from_url(settings.REDIS_URL, decode_responses=True)
-    _redis.ping()
-    REDIS_OK = True
-except Exception as e:
-    logger.warning(f"成本计数 Redis 不可用，降级 SQL SUM: {e}")
-    _redis = None
-    REDIS_OK = False
 
 _pricing_cache: dict | None = None
 _pricing_ts = 0.0
@@ -76,10 +66,10 @@ def add_cost(model: str, tokens: int) -> float:
     cost = calc_cost(model, tokens)
     if cost <= 0:
         return cost
-    if REDIS_OK:
+    if redis_ok():
         try:
             key = f"cost:daily:{_today()}"
-            pipe = _redis.pipeline()
+            pipe = get_redis().pipeline()
             pipe.incrbyfloat(key, cost)
             pipe.expire(key, 3 * 86400)
             pipe.execute()
@@ -93,9 +83,9 @@ def add_cost(model: str, tokens: int) -> float:
 
 def daily_cost() -> float:
     """当日累计成本：Redis 优先，miss/异常回源 SQL SUM"""
-    if REDIS_OK:
+    if redis_ok():
         try:
-            val = _redis.get(f"cost:daily:{_today()}")
+            val = get_redis().get(f"cost:daily:{_today()}")
             if val is not None:
                 return float(val)
         except Exception as e:

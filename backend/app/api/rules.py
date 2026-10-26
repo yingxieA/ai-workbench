@@ -1,5 +1,6 @@
 """敏感词 / 分类关键词管理 API（仅 admin）：DB 持久化 + Redis 缓存热更新"""
 
+from app.core.errors import ErrorCode
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -48,11 +49,15 @@ def add_keyword_api(req: KeywordRequest, admin: User = Depends(require_admin), d
     req.category = (req.category or "").strip().lower()
     req.keyword = (req.keyword or "").strip()
     if req.category not in VALID_CATEGORIES:
-        raise HTTPException(status_code=400, detail="category 仅支持 sensitive/classify")
+        raise HTTPException(
+            status_code=400, detail=(ErrorCode.RULE_CATEGORY_INVALID, "category 仅支持 sensitive/classify")
+        )
     if not req.keyword:
-        raise HTTPException(status_code=400, detail="keyword 不能为空")
+        raise HTTPException(status_code=400, detail=(ErrorCode.RULE_KEYWORD_EMPTY, "keyword 不能为空"))
     if req.level not in VALID_LEVELS:
-        raise HTTPException(status_code=400, detail="level 仅支持 public/internal/secret")
+        raise HTTPException(
+            status_code=400, detail=(ErrorCode.RULE_LEVEL_INVALID, "level 仅支持 public/internal/secret")
+        )
     result = add_keyword(req.category, req.keyword, req.level, admin.username)
     _audit(db, admin, "add_keyword", {"category": req.category, "keyword": req.keyword, "level": req.level})
     db.commit()

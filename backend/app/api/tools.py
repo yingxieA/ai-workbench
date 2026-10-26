@@ -8,6 +8,7 @@
 仅 admin（role_level >= 100）可操作；启停状态持久化到 agent_tools 表，重启自动恢复。
 """
 
+from app.core.errors import ErrorCode
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
@@ -62,7 +63,7 @@ def toggle_tool(name: str, _user=Depends(require_admin)):
         raise HTTPException(status_code=404, detail=f"工具不存在: {name}")
     new_state = not spec.enabled
     if not registry.set_enabled(name, new_state):
-        raise HTTPException(status_code=500, detail="切换失败")
+        raise HTTPException(status_code=500, detail=(ErrorCode.TOOL_SWITCH_FAILED, "切换失败"))
     # 持久化
     db = SessionLocal()
     try:
@@ -93,9 +94,13 @@ def toggle_tool(name: str, _user=Depends(require_admin)):
 def register_external(req: ExternalMcpRequest, _user=Depends(require_admin)):
     """注册外部 MCP Server：连接拉取工具 → 注入工具池 → 持久化（重启自动重连）"""
     if req.conn_type not in ("stdio", "sse", "streamable_http"):
-        raise HTTPException(status_code=400, detail="conn_type 仅支持 stdio / sse / streamable_http")
+        raise HTTPException(
+            status_code=400, detail=(ErrorCode.TOOL_CONN_TYPE_INVALID, "conn_type 仅支持 stdio / sse / streamable_http")
+        )
     if req.conn_type == "stdio" and not req.command.strip():
-        raise HTTPException(status_code=400, detail="stdio 模式必须提供 command")
+        raise HTTPException(
+            status_code=400, detail=(ErrorCode.TOOL_STDIO_COMMAND_REQUIRED, "stdio 模式必须提供 command")
+        )
     if req.conn_type in ("sse", "streamable_http") and not req.url.strip():
         raise HTTPException(status_code=400, detail=f"{req.conn_type} 模式必须提供 url")
 
@@ -116,7 +121,10 @@ def register_external(req: ExternalMcpRequest, _user=Depends(require_admin)):
         raise HTTPException(status_code=502, detail=f"连接外部 MCP 失败: {str(e)[:200]}")
 
     if not registered:
-        raise HTTPException(status_code=422, detail="连接成功但未拉取到任何工具（检查 Server 是否实现了 tools/list）")
+        raise HTTPException(
+            status_code=422,
+            detail=(ErrorCode.TOOL_FETCH_EMPTY, "连接成功但未拉取到任何工具（检查 Server 是否实现了 tools/list）"),
+        )
 
     # 持久化连接配置（含来源标记）
     db = SessionLocal()

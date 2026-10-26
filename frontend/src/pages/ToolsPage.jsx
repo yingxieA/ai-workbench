@@ -32,7 +32,7 @@ export default function ToolsPage() {
         setTools(tools.map(t => t.name === name ? { ...t, enabled: data.enabled } : t));
         message.success(`「${name}」已${data.enabled ? '启用' : '停用'}`);
       } else {
-        message.error(data.detail || '切换失败');
+        message.error(extractError(data, '切换失败'));
         fetchTools();
       }
     } catch (e) { message.error('切换失败：' + e.message); }
@@ -46,7 +46,7 @@ export default function ToolsPage() {
         setTools(tools.filter(t => t.name !== name));
         message.success(`已卸载「${name}」`);
       } else {
-        message.error(data.detail || '卸载失败');
+        message.error(extractError(data, '卸载失败'));
       }
     } catch (e) { message.error('卸载失败：' + e.message); }
   };
@@ -69,7 +69,7 @@ export default function ToolsPage() {
         form.resetFields();
         fetchTools();
       } else {
-        message.error(data.detail || '注册失败');
+        message.error(extractError(data, '注册失败'));
       }
     } catch (e) { message.error('注册失败：' + e.message); }
     setRegLoading(false);

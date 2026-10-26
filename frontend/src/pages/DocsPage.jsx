@@ -48,18 +48,26 @@ function DocsPage({ t }) {
       const res = await authFetch(`${import.meta.env.VITE_API_BASE}/api/documents/${d.id}/relabel`, { method: 'POST' });
       const data = await res.json();
       if (res.ok) { message.success(`重新打标完成，处理 ${data.relabeled} 个片段`); }
-      else message.error(data.detail || '重新打标失败');
+      else message.error(extractError(data, '重新打标失败'));
     } finally { setRelabeling(null); }
   };
 
   const uploadCountRef = useRef(0);
   const totalUploadRef = useRef(0);
   const loadingHideRef = useRef(null);
+  // 图片附件暂存：随主文档一起上传（md/txt 引用按 basename 匹配）
+  const pendingImagesRef = useRef([]);
 
   const handleUpload = async (file, fileList) => {
-    // 第一个文件开始时，显示总的上传中提示
+    // 图片附件：先收集到 pendingImagesRef，随主文档一起上传（不单独计数）
+    if (/\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(file.name)) {
+      pendingImagesRef.current.push(file);
+      return false;
+    }
+    // 第一个主文件开始时，显示总的上传中提示（图片不计入总数）
+    const mainFiles = fileList.filter(f => !/\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(f.name));
     if (uploadCountRef.current === 0) {
-      totalUploadRef.current = fileList.length;
+      totalUploadRef.current = mainFiles.length;
       setUploading(true);
       loadingHideRef.current = message.loading(`正在上传 ${totalUploadRef.current} 个文件...`, 0);
     }
@@ -69,14 +77,31 @@ function DocsPage({ t }) {
     formData.append('file', file);
     const isPdf = file.name.toLowerCase().endsWith('.pdf');
 
+    // 携带图片附件（如有）：先传图拿 presigned URL 映射，附加到主文档请求
+    const pendingImages = pendingImagesRef.current;
+    if (!isPdf && pendingImages.length) {
+      try {
+        const imgForm = new FormData();
+        pendingImages.forEach(f => imgForm.append('files', f));
+        const ir = await authFetch(`${import.meta.env.VITE_API_BASE}/api/documents/upload-images`, { method: 'POST', body: imgForm });
+        const idata = await ir.json();
+        formData.append('image_urls', JSON.stringify(idata.images || []));
+        pendingImagesRef.current = [];
+      } catch (e) {
+        // 图片上传失败不阻断主文档上传（图片缺失时预览显示 alt 文本）
+        console.warn('图片附件上传失败，文档将不显示图片', e);
+        pendingImagesRef.current = [];
+      }
+    }
+
     const finishUpload = () => {
       uploadCountRef.current -= 1;
       // 所有文件都上传完，才关闭总的提示
       if (uploadCountRef.current === 0) {
         if (loadingHideRef.current) loadingHideRef.current();
         setUploading(false);
-        message.success(`全部上传完成！共处理 ${totalUploadRef.current} 个文件`);
-        fetchDocs(1, newType);
+        message.success(`全部处理完成！共处理 ${totalUploadRef.current} 个文件`);
+        fetchDocs(1);
       }
     };
 
@@ -90,13 +115,26 @@ function DocsPage({ t }) {
       if (isPdf && data.task_id) {
         // PDF 异步解析，轮询
         const poll = setInterval(async () => {
-          const r = await authFetch(`${import.meta.env.VITE_API_BASE}/api/documents/task/${data.task_id}`);
-          const t = await r.json();
-          if (t.status === 'done' || t.status === 'failed') {
+          try {
+            const r = await authFetch(`${import.meta.env.VITE_API_BASE}/api/documents/task/${data.task_id}`);
+            const t = await r.json();
+            if (t.status === 'done' || t.status === 'failed') {
+              clearInterval(poll);
+              finishUpload();
+            }
+          } catch (e) {
+            // 轮询请求异常：结束轮询并收尾，避免上传提示卡死
             clearInterval(poll);
             finishUpload();
           }
         }, 2000);
+      } else if (data.status === 'exists') {
+        // 内容 md5 已存在（软删记录已排除，正常场景是重复上传已有文档）
+        message.warning(`「${file.name}」已存在，未重复上传`);
+        finishUpload();
+      } else if (data.status === 'empty') {
+        message.warning(`「${file.name}」内容为空或无法解析，未入库`);
+        finishUpload();
       } else {
         finishUpload();
       }
@@ -124,7 +162,7 @@ function DocsPage({ t }) {
       {/* 上传区域：紧凑瘦身 */}
       <div className="card" style={{ marginBottom: 16, padding: 0 }}>
         <Upload.Dragger
-          accept=".md,.txt,.ipynb,.pdf"
+          accept=".md,.txt,.ipynb,.pdf,.png,.jpg,.jpeg,.gif,.webp,.bmp,.svg"
           beforeUpload={handleUpload}
           showUploadList={false}
           multiple
@@ -132,7 +170,7 @@ function DocsPage({ t }) {
         >
           <p style={{ margin: 0, fontSize: 14, color: '#6B7280' }}>
             <InboxOutlined style={{ marginRight: 8, fontSize: 18, color: '#9CA3AF' }} />
-            点击或拖拽文件到这里（支持 .md / .txt / .ipynb / .pdf）
+            点击或拖拽文件到这里（支持 .md / .txt / .ipynb / .pdf，可同时拖入图片作为 md 附件）
           </p>
         </Upload.Dragger>
       </div>

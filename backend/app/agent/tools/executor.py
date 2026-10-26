@@ -6,6 +6,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import inspect
+
 from app.agent.tools.registry import ToolContext, registry
 from app.agent.tools.validation import json_safe, validate_arguments
 from app.utils.logger import get_logger
@@ -26,11 +29,41 @@ def execute_tool(name: str, args: dict, ctx: ToolContext) -> dict:
 
     try:
         raw = spec.handler(args, ctx)
+        if inspect.isawaitable(raw):
+            raw = asyncio.run(raw)  # 同步上下文调用 async handler：临时 loop 跑完（脚本/单测用）
         result = json_safe(raw)
         logger.info(f"工具执行成功: {name} -> {str(result)[:120]}")
         return {"success": True, "tool": name, "result": result, "error": None}
     except Exception as e:
         logger.error(f"工具执行失败: {name} -> {e}")
+        return {"success": False, "tool": name, "result": None, "error": f"执行异常: {str(e)[:200]}"}
+
+
+async def aexecute_tool(name: str, args: dict, ctx: ToolContext) -> dict:
+    """async 工具执行器（方案 B 真取消）：
+    - async handler → 直接 await（协程级可被 task.cancel 强杀，httpx 请求即时终止）
+    - 同步 handler → asyncio.to_thread（不阻塞事件循环；同步函数内部靠 P2-A 取消检查压窗口）
+    取消（CancelledError）直接冒泡给调用方，由节点/图收尾。
+    """
+    spec = registry.get(name)
+    if spec is None:
+        return {"success": False, "tool": name, "result": None, "error": f"工具不存在: {name}"}
+    ok, err = validate_arguments(spec, args)
+    if not ok:
+        logger.warning(f"工具 {name} 参数校验拦截: {err}")
+        return {"success": False, "tool": name, "result": None, "error": err}
+    try:
+        if inspect.iscoroutinefunction(spec.handler):
+            raw = await spec.handler(args, ctx)
+        else:
+            raw = await asyncio.to_thread(spec.handler, args, ctx)
+        result = json_safe(raw)
+        logger.info(f"工具 async 执行成功: {name} -> {str(result)[:120]}")
+        return {"success": True, "tool": name, "result": result, "error": None}
+    except asyncio.CancelledError:
+        raise  # 方案 B：取消直接冒泡（task.cancel 强杀）
+    except Exception as e:
+        logger.error(f"工具 async 执行失败: {name} -> {e}")
         return {"success": False, "tool": name, "result": None, "error": f"执行异常: {str(e)[:200]}"}
 
 

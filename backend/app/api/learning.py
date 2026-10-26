@@ -1,5 +1,6 @@
 """学习路径 API"""
 
+from app.core.errors import ErrorCode
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
@@ -26,7 +27,7 @@ def _owned_path(db: Session, user_id: str, path_id) -> LearningPath | None:
     try:
         pid = uuid.UUID(path_id)
     except ValueError:
-        raise HTTPException(status_code=400, detail="无效的路径 ID")
+        raise HTTPException(status_code=400, detail=(ErrorCode.LEARNING_PATH_ID_INVALID, "无效的路径 ID"))
     path = db.query(LearningPath).filter(LearningPath.id == pid, LearningPath.is_deleted == False).first()
     if not path:
         return None
@@ -114,7 +115,7 @@ def update_node_status(
     """更新学习节点完成状态（仅本人）"""
     path = _owned_path(db, user_id, path_id)
     if not path:
-        raise HTTPException(status_code=404, detail="学习路径不存在")
+        raise HTTPException(status_code=404, detail=(ErrorCode.LEARNING_PATH_NOT_FOUND, "学习路径不存在"))
 
     completed = path.completed_nodes or []
     if req.completed and req.node_id not in completed:
@@ -137,7 +138,7 @@ def delete_path(
     """删除学习路径（仅本人）"""
     path = _owned_path(db, user_id, path_id)
     if not path:
-        raise HTTPException(status_code=404, detail="学习路径不存在")
+        raise HTTPException(status_code=404, detail=(ErrorCode.LEARNING_PATH_NOT_FOUND, "学习路径不存在"))
 
     path.is_deleted = True
     db.commit()

@@ -13,36 +13,49 @@ export function authHeaders(extra = {}) {
   return headers;
 }
 
+// refresh 单飞锁：并发 401 只发起一个 refresh，其余请求等待同一个 Promise（避免 token 轮换竞态 + 401 日志刷屏）
+let _refreshInFlight = null;
 /**
  * 用 refresh_token 换取新 token 对（轮换），写回 localStorage
  * @returns {Promise<boolean>} 是否成功
  */
 export async function refreshAccessToken() {
+  if (_refreshInFlight) return _refreshInFlight;
   const refreshToken = localStorage.getItem('refresh_token');
   if (!refreshToken) return false;
-  try {
-    const res = await fetch(`${import.meta.env.VITE_API_BASE}/api/auth/refresh`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refresh_token: refreshToken }),
-    });
-    if (!res.ok) return false;
-    const data = await res.json();
-    if (!data.token || !data.refresh_token) return false;
-    localStorage.setItem('token', data.token);
-    localStorage.setItem('refresh_token', data.refresh_token);
-    return true;
-  } catch (e) {
-    return false;
-  }
+  _refreshInFlight = (async () => {
+    try {
+      const res = await fetch(`${import.meta.env.VITE_API_BASE}/api/auth/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      });
+      if (!res.ok) return false;
+      const data = await res.json();
+      if (!data.token || !data.refresh_token) return false;
+      localStorage.setItem('token', data.token);
+      localStorage.setItem('refresh_token', data.refresh_token);
+      return true;
+    } catch (e) {
+      return false;
+    } finally {
+      _refreshInFlight = null;
+    }
+  })();
+  return _refreshInFlight;
 }
 
-/** 清除登录态并通知 App 跳登录页 */
+/** 清除登录态并通知 App 跳登录页（带单飞锁：并发 401 场景只执行一次） */
+let _cleared = false;
 export function clearAuthAndNotify() {
+  if (_cleared) return;
+  _cleared = true;
   localStorage.removeItem('token');
   localStorage.removeItem('refresh_token');
   localStorage.removeItem('user');
   window.dispatchEvent(new Event('auth-expired'));
+  // 登出后复位，允许下次登录后再失效时再次触发
+  setTimeout(() => { _cleared = false; }, 0);
 }
 
 /**

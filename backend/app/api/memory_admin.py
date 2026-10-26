@@ -5,6 +5,7 @@
 - 所有写操作写 AuditLog（action: edit_summary / delete_session_memory / edit_profile / delete_profile）
 """
 
+from app.core.errors import ErrorCode
 import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -98,7 +99,7 @@ def get_session_memory_detail(
     try:
         sid = uuid.UUID(session_id)
     except Exception:
-        raise HTTPException(status_code=400, detail="session_id 格式错误")
+        raise HTTPException(status_code=400, detail=(ErrorCode.MEMORY_SESSION_ID_INVALID, "session_id 格式错误"))
 
     sum_row = db.query(SessionSummary).filter(SessionSummary.session_id == sid).first()
     recent = (
@@ -129,11 +130,11 @@ def edit_session_summary(
     """人工修正会话摘要（version+1，写审计）"""
     summary = (payload.get("summary") or "").strip()
     if not summary:
-        raise HTTPException(status_code=400, detail="摘要不能为空")
+        raise HTTPException(status_code=400, detail=(ErrorCode.MEMORY_SUMMARY_EMPTY, "摘要不能为空"))
     try:
         sid = uuid.UUID(session_id)
     except Exception:
-        raise HTTPException(status_code=400, detail="session_id 格式错误")
+        raise HTTPException(status_code=400, detail=(ErrorCode.MEMORY_SESSION_ID_INVALID, "session_id 格式错误"))
 
     row = db.query(SessionSummary).filter(SessionSummary.session_id == sid).first()
     if row is None:
@@ -164,7 +165,7 @@ def delete_session_memory(
     try:
         sid = uuid.UUID(session_id)
     except Exception:
-        raise HTTPException(status_code=400, detail="session_id 格式错误")
+        raise HTTPException(status_code=400, detail=(ErrorCode.MEMORY_SESSION_ID_INVALID, "session_id 格式错误"))
 
     deleted = db.query(SessionSummary).filter(SessionSummary.session_id == sid).delete()
     cache_invalidate(session_id)
@@ -241,7 +242,7 @@ def edit_user_profile(
     """人工修正画像（整体替换，version+1，写审计）"""
     profile = payload.get("profile")
     if not isinstance(profile, dict) or not profile:
-        raise HTTPException(status_code=400, detail="profile 必须是非空 JSON 对象")
+        raise HTTPException(status_code=400, detail=(ErrorCode.MEMORY_PROFILE_INVALID, "profile 必须是非空 JSON 对象"))
 
     row = db.query(UserProfile).filter(UserProfile.user_id == user_id).first()
     if row is None:

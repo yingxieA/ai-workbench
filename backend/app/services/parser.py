@@ -9,8 +9,29 @@ import httpx
 from app.config import settings
 
 
-async def parse_pdf(file_bytes: bytes, filename: str = "doc.pdf") -> str:
-    """调 MinerU API 解析 PDF，返回 Markdown 文本"""
+_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"}
+
+
+def _mime_of(name: str) -> str:
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+    return {
+        "png": "image/png",
+        "jpg": "image/jpeg",
+        "jpeg": "image/jpeg",
+        "gif": "image/gif",
+        "webp": "image/webp",
+        "bmp": "image/bmp",
+        "svg": "image/svg+xml",
+    }.get(ext, "image/png")
+
+
+async def parse_pdf(file_bytes: bytes, filename: str = "doc.pdf") -> tuple[str, list[dict]]:
+    """调 MinerU API 解析 PDF。
+
+    返回 (markdown 文本, images)，images 为文档内图片列表：
+        [{"ref_name": "images/xx.png", "data": bytes, "mime": "image/png"}, ...]
+    图片由调用方落盘（MinIO）+ 生成图注索引（P1 多模态 RAG）。
+    """
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {settings.MINERU_API_KEY}",
@@ -30,7 +51,7 @@ async def parse_pdf(file_bytes: bytes, filename: str = "doc.pdf") -> str:
         )
         result = resp.json()
         if result.get("code") != 0:
-            return f"申请上传失败: {result.get('msg')}"
+            return f"申请上传失败: {result.get('msg')}", []
 
         batch_id = result["data"]["batch_id"]
         upload_url = result["data"]["file_urls"][0]
@@ -38,7 +59,7 @@ async def parse_pdf(file_bytes: bytes, filename: str = "doc.pdf") -> str:
         # 2. PUT 上传文件
         put_resp = await client.put(upload_url, content=file_bytes)
         if put_resp.status_code not in (200, 201):
-            return "文件上传失败"
+            return "文件上传失败", []
 
         # 3. 轮询结果
         for _ in range(60):
@@ -57,13 +78,23 @@ async def parse_pdf(file_bytes: bytes, filename: str = "doc.pdf") -> str:
                         zip_resp = await client.get(zip_url)
                         z = zipfile.ZipFile(io.BytesIO(zip_resp.content))
                         md = ""
+                        images: list[dict] = []
                         for name in z.namelist():
-                            if name.endswith(".md"):
+                            low = name.lower()
+                            if low.endswith(".md"):
                                 md += z.read(name).decode("utf-8", errors="ignore") + "\n\n"
-                        return md
+                            elif any(low.endswith(ext) for ext in _IMAGE_EXTS):
+                                images.append(
+                                    {
+                                        "ref_name": name,  # zip 内相对路径（md 引用同款）
+                                        "data": z.read(name),
+                                        "mime": _mime_of(name),
+                                    }
+                                )
+                        return md, images
                 elif state == "failed":
-                    return "解析失败"
-        return "解析超时"
+                    return "解析失败", []
+        return "解析超时", []
 
 
 def parse_ipynb(file_bytes: bytes) -> list[dict]:

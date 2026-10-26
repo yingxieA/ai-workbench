@@ -24,7 +24,7 @@ export function PermissionModal({ doc, onClose, onUpdated }) {
         onClose();
       } else {
         const d = await res.json();
-        message.error(d.detail || '更新失败');
+        message.error(extractError(d, '更新失败'));
       }
     } finally { setSaving(false); }
   };
@@ -83,7 +83,7 @@ export function ReviewModal({ doc, onClose, onUpdated }) {
       onUpdated?.();
     } else {
       const d = await res.json();
-      message.error(d.detail || '更新失败');
+      message.error(extractError(d, '更新失败'));
     }
   };
 
@@ -149,7 +149,7 @@ export function KeywordModal({ open, onClose }) {
       fetchAll();
     } else {
       const d = await res.json();
-      message.error(d.detail || '添加失败');
+      message.error(extractError(d, '添加失败'));
     }
   };
 

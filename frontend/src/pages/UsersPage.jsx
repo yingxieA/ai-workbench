@@ -69,7 +69,7 @@ export default function UsersPage() {
     if (res.ok) {
       message.success(`${u.username} 已调整为${levelMeta[role_level].label}用户`);
       fetchUsers(page, search);
-    } else message.error(data.detail || '更新失败');
+    } else message.error(extractError(data, '更新失败'));
   };
 
   const changeStatus = async (u, status) => {
@@ -80,7 +80,7 @@ export default function UsersPage() {
     if (res.ok) {
       message.success(status === 'active' ? `已启用 ${u.username}` : `已禁用 ${u.username}`);
       fetchUsers(page, search);
-    } else message.error(data.detail || '操作失败');
+    } else message.error(extractError(data, '操作失败'));
   };
 
   const isSelf = (u) => {

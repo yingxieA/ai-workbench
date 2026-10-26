@@ -95,7 +95,7 @@ export default function MemoryPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
-      if (!res.ok) throw new Error((await res.json()).detail || '保存失败');
+      if (!res.ok) throw new Error(extractError(await res.json(), '保存失败'));
       message.success('已修正');
       setEditing(null);
       fetchSessions(sPage); fetchProfiles(pPage);
@@ -108,7 +108,7 @@ export default function MemoryPage() {
         ? `${API}/api/memories/sessions/${row.session_id}/memory`
         : `${API}/api/memories/profiles/${row.user_id}`;
       const res = await authFetch(url, { method: 'DELETE' });
-      if (!res.ok) throw new Error((await res.json()).detail || '删除失败');
+      if (!res.ok) throw new Error(extractError(await res.json(), '删除失败'));
       message.success(type === 'session' ? '会话记忆已清除（聊天记录保留）' : '用户画像已清空');
       fetchSessions(sPage); fetchProfiles(pPage);
     } catch (e) { message.error('删除失败：' + e.message); }

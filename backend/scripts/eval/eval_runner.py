@@ -25,6 +25,7 @@ import json
 import re
 import sys
 import time
+import asyncio
 import uuid
 
 BACKEND = r"D:\study\ai_study\proj\ai-workbench\backend"
@@ -80,7 +81,16 @@ def run_case(case: dict, force_rag: bool) -> dict:
     tool_calls: list[str] = []
     # graph 已编译 checkpointer（PostgresSaver），stream 必须带 config.thread_id
     config = {"configurable": {"thread_id": str(uuid.uuid4()), "user_id": state["user_id"]}}
-    for event in graph.stream(state, config=config, stream_mode="custom"):
+
+    # B8：图已全 async（方案 B）——同步脚本里用 asyncio.run 包一层收集事件
+    async def _collect():
+        out = []
+        async for event in graph.astream(state, config=config, stream_mode="custom"):
+            out.append(event)
+        return out
+
+    events = asyncio.run(_collect())
+    for event in events:
         if not isinstance(event, dict) or "type" not in event:
             continue
         etype = event["type"]

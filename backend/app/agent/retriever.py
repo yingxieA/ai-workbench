@@ -6,7 +6,9 @@
 - 权限过滤：contextvar 注入 {user_id, role_level}，SQL 层按文档可见性 + 片段敏感等级过滤
 """
 
+import asyncio
 import threading
+import time
 from contextvars import ContextVar
 from typing import Optional
 
@@ -20,6 +22,7 @@ from sqlalchemy import text
 from app.database import SessionLocal
 from app.services.embedding import embed_texts
 from app.services.reranker import rerank
+from app.agent.cancels import is_cancelled
 from app.utils.logger import get_logger
 
 logger = get_logger("agent_retriever")
@@ -86,7 +89,7 @@ class ChunksVectorStore(BasePydanticVectorStore):
         q_vec = query.query_embedding or embed_texts([query.query_str])[0]
         db = SessionLocal()
         try:
-            sql = f"""SELECT c.id, c.parent_chunk_id, c.doc_id, c.content, d.title
+            sql = f"""SELECT c.id, c.parent_chunk_id, c.doc_id, c.content, c.resource_url, d.title
                      FROM chunks c
                      JOIN documents d ON c.doc_id = d.id
                      WHERE c.is_deleted = FALSE
@@ -103,7 +106,8 @@ class ChunksVectorStore(BasePydanticVectorStore):
                 metadata={
                     "doc_id": str(r[2]),
                     "parent_chunk_id": str(r[1]) if r[1] else None,
-                    "title": r[4],
+                    "resource_url": str(r[4]) if r[4] else None,
+                    "title": r[5],
                 },
             )
             for r in rows
@@ -211,12 +215,19 @@ def _rewrite_query(question: str) -> str:
         return q
 
 
-def rag_retrieve(state) -> dict:
-    """检索节点：LlamaIndex 召回 → 父子回表 → 重排 → 阈值过滤，StreamWriter 推送引用元数据"""
+async def rag_retrieve(state) -> dict:
+    """检索节点：LlamaIndex 召回 → 父子回表 → 重排 → 阈值过滤，StreamWriter 推送引用元数据
+    （方案 B：async 声明使节点可被 task.cancel 协程级强杀；内部同步检索逻辑保持——DB/embedding 为短阻塞）"""
+    # P0 取消传播：新请求到达（打断模式标记）→ 立即终止检索，尽快让位新请求
+    if is_cancelled(state.get("session_id", ""), state.get("epoch")):
+        logger.info(f"检索被新请求打断: session={state.get('session_id')}")
+        return {"contexts": [], "contexts_meta": [], "filtered": 0, "interrupted": True}
+    _node_t0 = time.time()
     from langgraph.config import get_stream_writer
 
     writer = get_stream_writer()
     question = state.get("question", "")
+    logger.info(f"检索开始: q={question[:40]}")
 
     # 权限注入：从 AgentState 取 user_id → 查 role_level → 设置检索 scope
     uid = state.get("user_id")
@@ -237,7 +248,8 @@ def rag_retrieve(state) -> dict:
     # 查询改写：召回用改写后的检索词（弥补术语鸿沟），失败降级原 query
     retrieve_query = _rewrite_query(question)
     retriever = get_llama_retriever()
-    nodes = retriever.retrieve(retrieve_query)
+    # B9：召回（embedding 向量化/检索，秒级阻塞）放线程池——主协程可被 task.cancel 即时强杀
+    nodes = await asyncio.to_thread(retriever.retrieve, retrieve_query)
 
     rows = [
         {
@@ -245,18 +257,21 @@ def rag_retrieve(state) -> dict:
             "parent_chunk_id": n.node.metadata.get("parent_chunk_id"),
             "doc_id": n.node.metadata.get("doc_id"),
             "content": n.node.text,
+            "resource_url": n.node.metadata.get("resource_url"),
             "doc_title": n.node.metadata.get("title", "未知文档"),
         }
         for n in nodes
     ]
     logger.info(f"LlamaIndex 召回 {len(rows)} 条（改写后 query: {retrieve_query[:50]}）")
 
-    # 父子块回表（质量与现有系统一致）
-    rows = _fetch_parent_contents(rows)
+    # 父子块回表（质量与现有系统一致）→ 线程池，取消可杀
+    rows = await asyncio.to_thread(_fetch_parent_contents, rows)
 
-    # bge-reranker 重排（本地 CrossEncoder，与现有系统一致）
+    # bge-reranker 重排（本地 CrossEncoder，与现有系统一致）→ 线程池，取消可杀
     docs = [r["content"] for r in rows]
-    reranked = rerank(retrieve_query, docs, top_k=RERANK_TOP_K)  # 重排与召回口径一致（改写 query）
+    reranked = await asyncio.to_thread(
+        rerank, retrieve_query, docs, top_k=RERANK_TOP_K
+    )  # 重排与召回口径一致（改写 query）
     reranked_with_meta = []
     for doc, score in reranked:
         for r in rows:
@@ -265,6 +280,8 @@ def rag_retrieve(state) -> dict:
                     {
                         "content": doc,
                         "doc_title": r.get("doc_title", "未知文档"),
+                        "doc_id": r.get("doc_id"),
+                        "resource_url": r.get("resource_url"),
                         "score": float(score),
                     }
                 )
@@ -279,7 +296,9 @@ def rag_retrieve(state) -> dict:
         {
             "index": i + 1,
             "title": item["doc_title"],
+            "doc_id": item.get("doc_id"),
             "content": item["content"][:150] + "...",
+            "resource_url": item.get("resource_url"),
         }
         for i, item in enumerate(filtered)
     ]
@@ -297,6 +316,34 @@ def rag_retrieve(state) -> dict:
         },
     )
     result = {"contexts": contexts, "contexts_meta": contexts_meta}
+
+    # —— 空检索联网兜底 ——
+    # 知识库无结果（filtered=0）且联网开关打开 + web_search 可用时：
+    # 置 route=tool + tool_calls=[web_search]，由 graph 条件边 _route_after_retrieve 导向 tool_execute 联网兜底，
+    # 保证「查不到也返回结果」（对齐 DeepSeek：检索不到 → 联网/通用参考 → 如实说明 + 反问，不硬答不转圈）
+    if not filtered:
+        options = state.get("options") or {}
+        web_on = bool(options.get("web_search", True)) and options.get("web_search") is not False
+        try:
+            from app.agent.tools.registry import registry
+
+            has_web = registry.get("web_search") is not None
+        except Exception:
+            has_web = False
+        if web_on and has_web:
+            result["route"] = "tool"
+            result["tool_calls"] = ["web_search"]
+            logger.info("知识库空检索且联网开启 → 图内转 web_search 兜底")
+            try:
+                writer(
+                    {"type": "thinking", "step_kind": "progress", "content": "知识库未检索到相关文档，转联网搜索兜底…"}
+                )
+            except Exception:
+                pass
+    logger.info(
+        f"检索完成: recall={len(rows)} reranked={len(reranked_with_meta)} filtered={len(filtered)} "
+        f"latency={int((time.time() - _node_t0) * 1000)}ms"
+    )
     try:
         writer({"type": "contexts", **result})
     except Exception:

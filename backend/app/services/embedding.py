@@ -37,11 +37,29 @@ def get_embedding_model():
     return _model
 
 
-def embed_texts(texts: list[str]) -> list[list[float]]:
-    """批量向量化，返回 1024 维向量"""
+def embed_texts(texts: list[str], batch_size: int = 16) -> list[list[float]]:
+    """分批向量化，返回 1024 维向量；CUDA OOM 时降级小 batch 重试"""
+    import numpy as np
+    import torch
+
     model = get_embedding_model()
-    logger.info(f"向量化 {len(texts)} 个块")
+    logger.info(f"向量化 {len(texts)} 个块, batch_size={batch_size}")
     t0 = time.time()
-    embeddings = model.encode(texts, normalize_embeddings=True)
+    outs = []
+    for i in range(0, len(texts), batch_size):
+        batch = texts[i : i + batch_size]
+        try:
+            outs.append(model.encode(batch, normalize_embeddings=True))
+        except torch.cuda.OutOfMemoryError:
+            logger.warning(f"向量化 OOM @ batch {i}, 降级 batch_size=4 重试")
+            sub = []
+            for j in range(0, len(batch), 4):
+                try:
+                    sub.append(model.encode(batch[j : j + 4], normalize_embeddings=True))
+                except torch.cuda.OutOfMemoryError:
+                    # 单条重试，再失败则抛错（由调用方处理）
+                    sub.append(model.encode(batch[j : j + 1], normalize_embeddings=True))
+            outs.append(np.concatenate(sub, axis=0))
+    embeddings = np.concatenate(outs, axis=0)
     logger.info(f"向量化完成，耗时 {time.time() - t0:.2f}s")
     return embeddings.tolist()

@@ -10,20 +10,10 @@ from sqlalchemy import text
 
 from app.database import SessionLocal
 from app.utils.logger import get_logger
+from app.core.redis_client import get_redis, redis_ok
 
 logger = get_logger("rule_keywords")
 
-try:
-    import redis as redis_lib
-    from app.config import settings
-
-    _redis = redis_lib.Redis.from_url(settings.REDIS_URL, decode_responses=True)
-    _redis.ping()
-    REDIS_OK = True
-except Exception as e:
-    logger.warning(f"Redis 不可用，关键词缓存降级为进程内缓存: {e}")
-    _redis = None
-    REDIS_OK = False
 
 # 进程内缓存兜底（Redis 挂了也能热更新）
 _mem_cache: dict[str, list[dict]] = {}
@@ -40,9 +30,9 @@ def get_keywords(category: str, refresh: bool = False) -> list[dict]:
     """按类别读取启用中的关键词，返回 [{keyword, level}]（Redis 缓存优先）"""
     key = _cache_key(category)
     if not refresh:
-        if REDIS_OK:
+        if redis_ok():
             try:
-                cached = _redis.get(key)
+                cached = get_redis().get(key)
                 if cached:
                     return json.loads(cached)
             except Exception:
@@ -63,9 +53,9 @@ def get_keywords(category: str, refresh: bool = False) -> list[dict]:
         db.close()
 
     # 写缓存
-    if REDIS_OK:
+    if redis_ok():
         try:
-            _redis.setex(key, _CACHE_TTL, json.dumps(result, ensure_ascii=False))
+            get_redis().setex(key, _CACHE_TTL, json.dumps(result, ensure_ascii=False))
         except Exception:
             pass
     with _mem_lock:
@@ -76,9 +66,9 @@ def get_keywords(category: str, refresh: bool = False) -> list[dict]:
 def invalidate(category: str):
     """配置变更后删除缓存，下个请求回源"""
     key = _cache_key(category)
-    if REDIS_OK:
+    if redis_ok():
         try:
-            _redis.delete(key)
+            get_redis().delete(key)
         except Exception:
             pass
     with _mem_lock:

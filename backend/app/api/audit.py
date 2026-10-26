@@ -2,6 +2,8 @@
 
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
+from app.core.errors import ErrorCode
+from app.core.metrics import error_stats
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -33,6 +35,12 @@ ACTIONS = [
 ]
 
 
+@router.get("/error-codes")
+def error_code_stats(admin: User = Depends(require_admin)):
+    """错误码聚合（admin）：近窗口内各错误码计数（Redis/内存计数，无表无迁移）"""
+    return {"items": error_stats()}
+
+
 @router.get("")
 def list_audit_logs(
     skip: int = 0,
@@ -55,7 +63,7 @@ def list_audit_logs(
         try:
             return datetime.strptime(s, "%Y-%m-%d")
         except Exception:
-            raise HTTPException(status_code=400, detail=f"时间格式应为 YYYY-MM-DD: {s}")
+            raise HTTPException(status_code=400, detail=(ErrorCode.AUDIT_INVALID_DATE, f"时间格式应为 YYYY-MM-DD: {s}"))
 
     if start:
         q = q.filter(AuditLog.created_at >= _parse(start))

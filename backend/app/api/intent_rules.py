@@ -4,6 +4,7 @@
 生效链路：运营界面改话术 → 写 DB → invalidate_rules() 删缓存 → 下个请求回源生效（无需重启）
 """
 
+from app.core.errors import ErrorCode
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -83,11 +84,13 @@ def add_intent_rule(req: IntentRuleRequest, admin: User = Depends(require_admin)
     req.reply_template = (req.reply_template or "").strip()
     req.intent = (req.intent or "chitchat").strip().lower()
     if req.trigger_type not in VALID_TRIGGER_TYPES:
-        raise HTTPException(status_code=400, detail="trigger_type 仅支持 exact/regex/keyword")
+        raise HTTPException(
+            status_code=400, detail=(ErrorCode.RULE_TRIGGER_TYPE_INVALID, "trigger_type 仅支持 exact/regex/keyword")
+        )
     if not req.trigger:
-        raise HTTPException(status_code=400, detail="trigger 不能为空")
+        raise HTTPException(status_code=400, detail=(ErrorCode.RULE_TRIGGER_EMPTY, "trigger 不能为空"))
     if not req.reply_template:
-        raise HTTPException(status_code=400, detail="reply_template 不能为空")
+        raise HTTPException(status_code=400, detail=(ErrorCode.RULE_REPLY_EMPTY, "reply_template 不能为空"))
     if req.trigger_type == "regex":
         # 校验正则合法性，非法直接 400（避免线上非法正则拖垮匹配）
         import re
@@ -97,7 +100,7 @@ def add_intent_rule(req: IntentRuleRequest, admin: User = Depends(require_admin)
         except re.error as e:
             raise HTTPException(status_code=400, detail=f"非法正则: {e}")
     if req.priority < 0 or req.priority > 100:
-        raise HTTPException(status_code=400, detail="priority 取值 0-100")
+        raise HTTPException(status_code=400, detail=(ErrorCode.RULE_PRIORITY_INVALID, "priority 取值 0-100"))
 
     exists = db.execute(
         text("SELECT id FROM intent_rules WHERE trigger_type=:t AND trigger=:g"),
@@ -152,7 +155,7 @@ def delete_intent_rule(req: DeleteRequest, admin: User = Depends(require_admin),
         {"t": req.trigger_type, "g": req.trigger},
     )
     if result.rowcount == 0:
-        raise HTTPException(status_code=404, detail="规则不存在")
+        raise HTTPException(status_code=404, detail=(ErrorCode.RULE_NOT_FOUND, "规则不存在"))
     _audit(db, admin, "delete_intent_rule", {"trigger_type": req.trigger_type, "trigger": req.trigger})
     db.commit()
     invalidate_rules()
@@ -169,7 +172,7 @@ def toggle_intent_rule(
         {"e": req.enabled, "id": rule_id},
     )
     if result.rowcount == 0:
-        raise HTTPException(status_code=404, detail="规则不存在")
+        raise HTTPException(status_code=404, detail=(ErrorCode.RULE_NOT_FOUND, "规则不存在"))
     _audit(db, admin, "toggle_intent_rule", {"id": rule_id, "enabled": req.enabled})
     db.commit()
     invalidate_rules()

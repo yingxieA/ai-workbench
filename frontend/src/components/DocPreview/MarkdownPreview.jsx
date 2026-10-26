@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useRef, memo } from 'react';
 import { Spin, message, Tooltip } from 'antd';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
@@ -118,6 +118,11 @@ const MarkdownContent = memo(function MarkdownContent({ content, headingRefs }) 
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
+      urlTransform={(url) => {
+        // 放行 base64 图片（data:image/），其余协议仍走默认安全过滤（http/https/mailto/tel）
+        if (url.startsWith('data:image/')) return url;
+        return defaultUrlTransform(url);
+      }}
       components={{
         pre: ({ children }) => {
           const codeEl = children;
@@ -127,6 +132,9 @@ const MarkdownContent = memo(function MarkdownContent({ content, headingRefs }) 
           const code = String(codeEl?.props?.children || '').replace(/\n$/, '');
           return <CodeBlock language={language} code={code} />;
         },
+        img: ({ src, alt }) => (
+          <img src={src} alt={alt} style={{ maxWidth: '100%', height: 'auto', borderRadius: 8, margin: '12px 0' }} />
+        ),
         code: ({ children }) => (
           <code style={{
             background: '#F3F4F6', color: '#DB2777', padding: '2px 6px',

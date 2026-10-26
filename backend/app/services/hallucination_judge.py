@@ -7,7 +7,6 @@
 
 import json
 import re
-import threading
 from openai import OpenAI
 
 from app.config import settings
@@ -117,5 +116,7 @@ def judge_and_persist(session_id: str, question: str, contexts: list[str], answe
 
 
 def run_judge_async(session_id: str, question: str, contexts: list[str], answer: str):
-    """异步触发（独立线程，不阻塞主链路）"""
-    threading.Thread(target=judge_and_persist, args=(session_id, question, contexts, answer), daemon=True).start()
+    """异步触发（应用级线程池，不阻塞主链路）"""
+    from app.core.pool import bg_pool
+
+    bg_pool().submit(judge_and_persist, session_id, question, contexts, answer)

@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Button, Avatar, Dropdown, Tooltip, Input, message, Popconfirm } from 'antd';
 import {
   MenuFoldOutlined, MenuUnfoldOutlined, PlusOutlined,
   HomeOutlined, MessageOutlined, NotificationOutlined,
   GithubOutlined, BulbOutlined, RocketOutlined,
   UserOutlined, LogoutOutlined, FileTextOutlined, MoreOutlined, EnvironmentOutlined, AuditOutlined, AppstoreOutlined,
-  DatabaseOutlined, BarChartOutlined, BugOutlined
+  DatabaseOutlined, BarChartOutlined, BugOutlined, ExperimentOutlined, SettingOutlined
 } from '@ant-design/icons';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import useAppStore from './store/useAppStore';
@@ -24,6 +24,8 @@ import QualityCenterPage from './pages/QualityCenterPage';
 import ToolsPage from './pages/ToolsPage';
 import IntentRulesPage from './pages/IntentRulesPage';
 import DebuggerPage from './pages/DebuggerPage';
+import EvalCenterPage from './pages/EvalCenterPage';
+import ConfigCenterPage from './pages/ConfigCenterPage';
 import { authHeaders, authFetch } from './utils/api';
 import './App.css';
 
@@ -31,7 +33,7 @@ const i18n = {
   zh: {
     'nav.dashboard': '工作台总览', 'nav.chat': '智能问答', 'nav.news': 'AI 日报', 'nav.github': 'GitHub 周榜',
     'nav.skills': '技能管理', 'nav.learning': '学习路径', 'nav.docs': '文档管理', 'nav.travel': '旅游规划',
-    'nav.users': '用户管理', 'nav.audit': '审计日志', 'nav.tools': '工具管理', 'nav.intents': '固定话术', 'nav.memories': '记忆管理', 'nav.quality': '质量中心', 'nav.debug': '调试面板',
+    'nav.users': '用户管理', 'nav.audit': '审计日志', 'nav.tools': '工具管理', 'nav.intents': '固定话术', 'nav.memories': '记忆管理', 'nav.quality': '质量中心', 'nav.debug': '调试面板', 'nav.eval': '测评中心', 'nav.configs': '配置中心',
     'app.title': 'AI 工作台', 'app.subtitle': '学习 · 问答 · 资讯',
     'chat.placeholder': '输入问题，回车发送', 'chat.send': '发送', 'chat.title': '智能问答',
     'chat.empty': '开始对话吧', 'chat.thinking': '思考中...',
@@ -42,7 +44,7 @@ const i18n = {
   en: {
     'nav.dashboard': 'Dashboard', 'nav.chat': 'Chat', 'nav.news': 'AI News', 'nav.github': 'GitHub Trending',
     'nav.skills': 'Skills', 'nav.learning': 'Learning Path', 'nav.docs': 'Documents',
-    'nav.users': 'Users', 'nav.audit': 'Audit Logs', 'nav.tools': 'Tools', 'nav.intents': 'Intent Rules', 'nav.memories': 'Memories', 'nav.quality': 'Quality Center', 'nav.debug': 'Debugger',
+    'nav.users': 'Users', 'nav.audit': 'Audit Logs', 'nav.tools': 'Tools', 'nav.intents': 'Intent Rules', 'nav.memories': 'Memories', 'nav.quality': 'Quality Center', 'nav.debug': 'Debugger', 'nav.eval': 'Eval Center', 'nav.configs': 'Config Center',
     'app.title': 'AI Workbench', 'app.subtitle': 'Learn · Chat · News',
     'chat.placeholder': 'Type your question...', 'chat.send': 'Send', 'chat.title': 'AI Chat',
     'chat.empty': 'Start a conversation', 'chat.thinking': 'Thinking...',
@@ -81,7 +83,7 @@ function LoginPage() {
         message.success('登录成功');
         navigate('/chat');
       } else {
-        message.error(data.detail || '登录失败');
+        message.error(extractError(data, '登录失败'));
       }
     } catch (e) {
       message.error('登录失败：' + e.message);
@@ -110,7 +112,7 @@ function LoginPage() {
         message.success('注册成功，已自动登录');
         navigate('/chat');
       } else {
-        message.error(data.detail || '注册失败');
+        message.error(extractError(data, '注册失败'));
       }
     } catch (e) {
       message.error('注册失败：' + e.message);
@@ -216,20 +218,22 @@ function App() {
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'light');
   const t = (key) => i18n[lang][key] || key;
 
+  // StrictMode（dev 模式）effect 会双调用：用 ref 守卫保证同一 token 周期只拉一次会话列表/用户信息
+  const initFetchedRef = useRef(false);
   useEffect(() => {
-    if (token) {
-      authFetch(`${import.meta.env.VITE_API_BASE}/api/chat/sessions`).then(r => r.json()).then(setSessionsList).catch(() => {});
-      // 刷新用户信息（确保 role_level/is_admin 最新，兼容旧 localStorage 缓存）
-      authFetch(`${import.meta.env.VITE_API_BASE}/api/auth/me`)
-        .then(r => r.json())
-        .then(data => {
-          if (data && data.id) {
-            setUser(data);
-            localStorage.setItem('user', JSON.stringify(data));
-          }
-        })
-        .catch(() => {});
-    }
+    if (!token || initFetchedRef.current) return;
+    initFetchedRef.current = true;
+    authFetch(`${import.meta.env.VITE_API_BASE}/api/chat/sessions`).then(r => r.json()).then(setSessionsList).catch(() => {});
+    // 刷新用户信息（确保 role_level/is_admin 最新，兼容旧 localStorage 缓存）
+    authFetch(`${import.meta.env.VITE_API_BASE}/api/auth/me`)
+      .then(r => r.json())
+      .then(data => {
+        if (data && data.id) {
+          setUser(data);
+          localStorage.setItem('user', JSON.stringify(data));
+        }
+      })
+      .catch(() => {});
   }, [token]);
 
   // 监听 auth-expired：refresh 失败时清登录态回登录页
@@ -258,19 +262,62 @@ function App() {
     setLoadingSession(true);
     try {
       const res = await authFetch(`${import.meta.env.VITE_API_BASE}/api/chat/sessions/${sid}/messages`);
+      if (!res.ok) {
+        // 会话不存在 / 无权限（404）：清掉脏 sessionId 降级为新会话，避免 404 死循环
+        console.warn('会话不可用，已重置为新会话:', sid, res.status);
+        setMessages([]);
+        setSessionId(null);
+        return;
+      }
       const data = await res.json();
       // 兼容后端返回数组或 { messages: [...] } 两种格式
       const msgs = Array.isArray(data) ? data : (data.messages || []);
-      setMessages(msgs);
+      // 合并模式：本地最后一条 assistant 内容与后端最后一条一致（流式刚结束自动 loadSession 的场景）时，
+      // 保留本地富字段（sources / toolSteps / route / confidence），仅补历史前段，避免覆盖丢失引用来源与思考卡
+      setMessages(prev => {
+        const local = Array.isArray(prev) ? prev : [];
+        if (local.length && msgs.length) {
+          const lastLocal = local[local.length - 1];
+          const lastRemote = msgs[msgs.length - 1];
+          if (
+            lastRemote && lastRemote.role === 'assistant' && lastLocal.role === 'assistant'
+            && lastLocal.content && lastRemote.content === lastLocal.content
+          ) {
+            return [...msgs.slice(0, msgs.length - 1).map(m => ({ role: m.role, content: m.content, toolSteps: m.tool_steps || [], sources: m.sources || [] })), lastLocal];
+          }
+        }
+        return msgs.map(m => ({ role: m.role, content: m.content, toolSteps: m.tool_steps || [], sources: m.sources || [] }));
+      });
       setSessionId(sid);
-    } catch (e) { console.error(e); setMessages([]); }
-    setLoadingSession(false);
+    } catch (e) { console.error(e); setMessages([]); setSessionId(null); }
+    finally { setLoadingSession(false); }
   };
+
+  // 已加载过的会话标记（防空会话 / 404 循环重拉：同一 sid 只拉一次）
+  const loadedSessionRef = useRef(null);
+
+  // 刷新后自动恢复上次会话：store 从 localStorage 恢复了 sessionId，
+  // 会话列表加载完成后重新拉取该会话消息（仅当该会话尚未加载过）
+  useEffect(() => {
+    if (token && sessionId && !loadingSession && loadedSessionRef.current !== sessionId) {
+      loadedSessionRef.current = sessionId;
+      loadSession(sessionId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, sessionId, sessionsList, loadingSession]);
 
   const newChat = () => {
     setMessages([]);
     setSessionId(null);
     setLoadingSession(false);
+    loadedSessionRef.current = null;
+    // 清 localStorage 会话归属：发送前 ChatPage 兜底恢复逻辑会读回老 session，
+    // 不清则新对话框自动"跳回"老会话（历史碎片化修复引入的副作用，这里根治）
+    try {
+      const _uid = JSON.parse(localStorage.getItem('user') || 'null')?.id || null;
+      const _key = _uid ? `chat_session_id_${_uid}` : 'chat_session_id';
+      localStorage.removeItem(_key);
+    } catch (e) {}
   };
 
   if (!token) {
@@ -297,6 +344,8 @@ function App() {
       { key: 'memories', icon: <DatabaseOutlined />, label: t('nav.memories') },
       { key: 'quality', icon: <BarChartOutlined />, label: t('nav.quality') },
       { key: 'debug', icon: <BugOutlined />, label: t('nav.debug') },
+      { key: 'eval', icon: <ExperimentOutlined />, label: t('nav.eval') },
+      { key: 'configs', icon: <SettingOutlined />, label: t('nav.configs') },
     ] : []),
   ];
 
@@ -381,9 +430,10 @@ function App() {
           <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: 16, borderTop: '1px solid var(--border-color)', background: 'var(--bg-primary)', zIndex: 1 }}>
             <Dropdown menu={{
               items: [
+                { key: 'userinfo', label: `当前用户：${user?.username || '未知'}${user?.nickname ? '（' + user.nickname + '）' : ''} · 等级 ${user?.role_level ?? '-'}`, disabled: true },
+                { type: 'divider' },
                 { key: 'lang', label: lang === 'zh' ? 'Switch to English' : '切换到中文' },
                 { key: 'theme', label: theme === 'dark' ? '切换到浅色' : '切换到深色' },
-                { type: 'divider' },
                 { key: 'logout', label: '退出登录', danger: true }
               ],
               onClick: ({ key }) => {
@@ -398,7 +448,7 @@ function App() {
             }} placement="topLeft">
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', justifyContent: collapsed ? 'center' : 'flex-start' }}>
                 <Avatar size={32} style={{ background: 'var(--accent-color)', flexShrink: 0 }} icon={<UserOutlined />} />
-                {!collapsed && <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{user?.nickname || user?.username || 'admin'}</span>}
+                {!collapsed && <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{user?.nickname || user?.username || '未登录'}</span>}
               </div>
             </Dropdown>
           </div>
@@ -439,6 +489,8 @@ function App() {
             <Route path="/memories" element={isAdmin ? <MemoryPage /> : <Navigate to="/chat" replace />} />
             <Route path="/quality" element={isAdmin ? <QualityCenterPage /> : <Navigate to="/chat" replace />} />
             <Route path="/debug" element={isAdmin ? <DebuggerPage /> : <Navigate to="/chat" replace />} />
+            <Route path="/eval" element={isAdmin ? <EvalCenterPage /> : <Navigate to="/chat" replace />} />
+            <Route path="/configs" element={isAdmin ? <ConfigCenterPage /> : <Navigate to="/chat" replace />} />
             <Route path="/skills" element={<SkillsPage t={t} />} />
             <Route path="/learning" element={<LearningPage />} />
             <Route path="/github" element={<GitHubPage t={t} />} />

@@ -11,3 +11,128 @@ html, body, #root {
   background: #faf8f5;
   font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif;
 }
+
+/* ===== 数学公式（KaTeX）——对齐 DeepSeek：块级居中、行内紧凑、长公式横向滚动 ===== */
+.katex-display {
+  margin: 10px 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 4px 0;
+}
+.katex-display > .katex {
+  font-size: 1.08em;
+}
+.markdown-body .katex {
+  font-size: 1.02em;
+}
+/* ===== AI 回答 Markdown 排版——对齐 Notion/DeepSeek 知识库阅读体验 ===== */
+.markdown-body {
+  line-height: 1.75;
+  font-size: 14px;
+  color: var(--text-primary);
+  word-break: break-word;
+}
+.markdown-body p {
+  margin: 0 0 16px;
+}
+.markdown-body h1 {
+  font-size: 22px;
+  font-weight: 700;
+  margin: 28px 0 14px;
+  line-height: 1.4;
+}
+.markdown-body h2 {
+  font-size: 19px;
+  font-weight: 700;
+  margin: 26px 0 12px;
+  line-height: 1.4;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border-color);
+}
+.markdown-body h3 {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 22px 0 10px;
+  line-height: 1.4;
+}
+.markdown-body h4 {
+  font-size: 14.5px;
+  font-weight: 600;
+  margin: 18px 0 8px;
+}
+.markdown-body ul,
+.markdown-body ol {
+  padding-left: 26px;
+  margin: 0 0 16px;
+}
+.markdown-body li {
+  margin: 5px 0;
+  line-height: 1.75;
+}
+.markdown-body li > ul,
+.markdown-body li > ol {
+  margin-bottom: 0;
+}
+.markdown-body blockquote {
+  border-left: 3px solid var(--accent-color);
+  margin: 0 0 16px;
+  padding: 6px 14px;
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  border-radius: 0 8px 8px 0;
+}
+.markdown-body blockquote p {
+  margin: 4px 0;
+}
+/* 表格：边框 + 表头背景 + 斑马纹 */
+.markdown-body table {
+  border-collapse: collapse;
+  margin: 14px 0 18px;
+  width: 100%;
+  font-size: 13.5px;
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+.markdown-body th,
+.markdown-body td {
+  border: 1px solid var(--border-color);
+  padding: 8px 12px;
+  text-align: left;
+  vertical-align: top;
+}
+.markdown-body th {
+  background: var(--bg-secondary);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.markdown-body tr:nth-child(even) td {
+  background: rgba(128, 128, 128, 0.04);
+}
+.markdown-body hr {
+  border: none;
+  border-top: 1px solid var(--border-color);
+  margin: 18px 0;
+}
+/* 引用上标 [n]：右侧来源可点、不影响正文阅读；无底色，hover 才出现浅蓝底提示 */
+.markdown-body .cite {
+  color: #2563eb;
+  background: transparent;
+  cursor: pointer;
+  font-size: 0.82em;
+  font-weight: 600;
+  margin: 0 1px;
+  padding: 0 1px;
+  border-radius: 3px;
+  user-select: none;
+  text-decoration: none;
+}
+.markdown-body .cite:hover {
+  background: rgba(37, 99, 235, 0.12);
+}
+body.dark .markdown-body .cite {
+  color: #60a5fa;
+}
+body.dark .markdown-body .cite:hover {
+  background: rgba(96, 165, 250, 0.15);
+}

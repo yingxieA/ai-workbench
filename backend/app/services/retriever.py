@@ -3,13 +3,29 @@
 from sqlalchemy import text
 from app.database import SessionLocal
 from app.services.embedding import embed_texts
+from app.services.system_configs import get_config
 from app.utils.logger import get_logger
 
 logger = get_logger("retriever")
 
 
-def vector_search(query: str, top_k: int = 50) -> list[dict]:
-    """向量召回（pgvector cosine）"""
+def _get_int(key: str, default: int) -> int:
+    """从 system_configs 读正整数配置，解析失败回退默认"""
+    raw = get_config(key, "")
+    if raw:
+        try:
+            v = int(raw)
+            if v > 0:
+                return v
+        except Exception:
+            pass
+    return default
+
+
+def vector_search(query: str, top_k: int | None = None) -> list[dict]:
+    """向量召回（pgvector cosine），top_k 默认读配置 rag_top_k_candidate"""
+    if top_k is None:
+        top_k = _get_int("rag_top_k_candidate", 50)
     q_vec = embed_texts([query])[0]
     db = SessionLocal()
     try:
@@ -64,10 +80,12 @@ def fetch_parent_contents(chunks: list[dict]) -> list[dict]:
         db.close()
 
 
-def retrieve(query: str, top_k: int = 20) -> list[dict]:
-    """向量召回 + 父子块回表"""
+def retrieve(query: str, top_k: int | None = None) -> list[dict]:
+    """向量召回 + 父子块回表，top_k 默认读配置 rag_top_k_final"""
+    if top_k is None:
+        top_k = _get_int("rag_top_k_final", 20)
     logger.info(f"检索: {query}")
-    candidates = vector_search(query, top_k=50)
+    candidates = vector_search(query)  # 候选数走 rag_top_k_candidate 配置
     # 父子块回表
     candidates = fetch_parent_contents(candidates)
     logger.info(f"最终 {len(candidates[:top_k])} 条")

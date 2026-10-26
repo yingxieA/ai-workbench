@@ -1,10 +1,14 @@
 """文档上传 API：admin 内容生产 + 文档级/片段级权限控制"""
 
+from app.core.errors import ErrorCode
 import hashlib
 import io
+import json
 import os
+import re
 import uuid as _uuid
-from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
+from datetime import timedelta
+from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -58,12 +62,12 @@ def _visible_doc_query(db: Session, user_id: str, role_level: int, doc_id: str) 
     """可见文档校验：本人文档 或 共享且等级达标（浏览/预览/下载用）"""
     doc = db.query(Document).filter(Document.is_deleted == False, Document.id == doc_id).first()
     if not doc:
-        raise HTTPException(status_code=404, detail="文档不存在")
+        raise HTTPException(status_code=404, detail=(ErrorCode.DOC_NOT_FOUND, "文档不存在"))
     if doc.user_id == user_id:
         return doc
     if doc.visibility != "restricted" and (doc.min_level or 10) <= (role_level or 10):
         return doc
-    raise HTTPException(status_code=403, detail="无权访问该文档")
+    raise HTTPException(status_code=403, detail=(ErrorCode.DOC_ACCESS_DENIED, "无权访问该文档"))
 
 
 @router.get("/list")
@@ -141,7 +145,7 @@ def get_raw_content(doc_id: str, user: User = Depends(get_current_user), db: Ses
     doc = _visible_doc_query(db, user.id, user.role_level or 10, doc_id)
     if not doc or not doc.file_path:
         logger.error(f"原始内容接口：文件不存在: {doc_id}")
-        raise HTTPException(status_code=404, detail="文件不存在")
+        raise HTTPException(status_code=404, detail=(ErrorCode.DOC_FILE_NOT_FOUND, "文件不存在"))
 
     logger.info(f"获取原始内容: {doc.title}, file_path={doc.file_path}")
 
@@ -190,7 +194,7 @@ def preview_document(doc_id: str, user: User = Depends(get_current_user), db: Se
     doc = _visible_doc_query(db, user.id, user.role_level or 10, doc_id)
     if not doc or not doc.file_path:
         logger.error(f"预览文件不存在: {doc_id}")
-        raise HTTPException(status_code=404, detail="文件不存在")
+        raise HTTPException(status_code=404, detail=(ErrorCode.DOC_FILE_NOT_FOUND, "文件不存在"))
     logger.info(f"预览文档: {doc.title}")
     try:
         resp = minio_client.get_object(BUCKET, doc.file_path)
@@ -214,7 +218,7 @@ def download_document(doc_id: str, user: User = Depends(get_current_user), db: S
     doc = _visible_doc_query(db, user.id, user.role_level or 10, doc_id)
     if not doc or not doc.file_path:
         logger.error(f"文件不存在: {doc_id}")
-        raise HTTPException(status_code=404, detail="文件不存在")
+        raise HTTPException(status_code=404, detail=(ErrorCode.DOC_FILE_NOT_FOUND, "文件不存在"))
     logger.info(f"下载文档: {doc.title}, file_path={doc.file_path}, is_pdf={doc.title.lower().endswith('.pdf')}")
     try:
         resp = minio_client.get_object(BUCKET, doc.file_path)
@@ -272,9 +276,11 @@ def set_document_permission(
     """设置文档级权限（仅 admin）"""
     doc = _owned_doc_query(db, admin.id, doc_id)
     if not doc:
-        raise HTTPException(status_code=404, detail="文档不存在")
+        raise HTTPException(status_code=404, detail=(ErrorCode.DOC_NOT_FOUND, "文档不存在"))
     if req.visibility not in ("public", "internal", "restricted"):
-        raise HTTPException(status_code=400, detail="visibility 仅支持 public/internal/restricted")
+        raise HTTPException(
+            status_code=400, detail=(ErrorCode.DOC_VISIBILITY_INVALID, "visibility 仅支持 public/internal/restricted")
+        )
     doc.visibility = req.visibility
     doc.min_level = max(10, min(100, req.min_level))
     _audit(
@@ -299,7 +305,7 @@ def list_doc_chunks(
     """复核列表：查看文档全部片段的敏感标记（仅 admin）"""
     doc = db.query(Document).filter(Document.id == doc_id, Document.is_deleted == False).first()
     if not doc:
-        raise HTTPException(status_code=404, detail="文档不存在")
+        raise HTTPException(status_code=404, detail=(ErrorCode.DOC_NOT_FOUND, "文档不存在"))
     q = db.query(Chunk).filter(Chunk.doc_id == doc_id, Chunk.is_deleted == False)
     total = q.count()
     rows = q.order_by(Chunk.chunk_index.asc()).offset(skip).limit(limit).all()
@@ -332,10 +338,12 @@ def update_chunk_label(
 ):
     """人工复核：修改片段敏感标记（仅 admin）"""
     if req.sensitivity not in ("public", "internal", "secret"):
-        raise HTTPException(status_code=400, detail="sensitivity 仅支持 public/internal/secret")
+        raise HTTPException(
+            status_code=400, detail=(ErrorCode.DOC_SENSITIVITY_INVALID, "sensitivity 仅支持 public/internal/secret")
+        )
     chunk = db.query(Chunk).filter(Chunk.id == chunk_id, Chunk.doc_id == doc_id, Chunk.is_deleted == False).first()
     if not chunk:
-        raise HTTPException(status_code=404, detail="片段不存在")
+        raise HTTPException(status_code=404, detail=(ErrorCode.DOC_CHUNK_NOT_FOUND, "片段不存在"))
     chunk.sensitivity = req.sensitivity
     chunk.min_level = max(10, min(100, req.min_level))
     chunk.classify_reason = req.reason or f"人工复核修改为 {req.sensitivity}"
@@ -360,7 +368,7 @@ def relabel_document(doc_id: str, admin: User = Depends(require_admin), db: Sess
     """重新打标整个文档（admin 手动触发，LLM 兜底重新分类）"""
     doc = db.query(Document).filter(Document.id == doc_id, Document.is_deleted == False).first()
     if not doc:
-        raise HTTPException(status_code=404, detail="文档不存在")
+        raise HTTPException(status_code=404, detail=(ErrorCode.DOC_NOT_FOUND, "文档不存在"))
     chunks = db.query(Chunk).filter(Chunk.doc_id == doc_id, Chunk.is_deleted == False).all()
     texts = [c.content for c in chunks]
     labels = label_chunks_batch(texts)
@@ -400,15 +408,17 @@ async def upload_async(
     )
     db.commit()
     # 后台任务
-    import threading
 
     def bg_task():
         import asyncio
+        import re
+        from datetime import timedelta
         from sqlalchemy import text as _text
         from app.database import SessionLocal
         from app.services.chunker import split_text, build_tsv
         from app.services.embedding import embed_texts
         from app.services.parser import parse_pdf
+        from app.services.vision import describe_image
 
         db2 = SessionLocal()
         try:
@@ -417,16 +427,11 @@ async def upload_async(
                 {"id": task_id},
             )
             db2.commit()
-            parsed = asyncio.run(parse_pdf(content, filename))
-            print(f"[PDF任务] parse_pdf 类型: {type(parsed)}")
+            parsed, images = asyncio.run(parse_pdf(content, filename))
+            print(f"[PDF任务] parse_pdf 类型: {type(parsed)}, 图片数: {len(images)}")
             print(f"[PDF任务] parse_pdf 前200字: {str(parsed)[:200]}")
             if not isinstance(parsed, str):
                 parsed = str(parsed)
-            pieces = split_text(parsed)
-            print(f"[PDF任务] 分片数: {len(pieces)}")
-            chunk_data = [{"text": p, "chunk_type": "text", "source_type": "pdf"} for p in pieces]
-            texts = [c["text"] for c in chunk_data]
-            embeddings = embed_texts(texts)
             md5 = hashlib.md5(content).hexdigest()
             object_name = f"{md5}/{filename}"
             minio_client.put_object(
@@ -436,6 +441,47 @@ async def upload_async(
                 len(content),
                 content_type="application/pdf",
             )
+            # 图片上传 MinIO + md 引用替换为 presigned URL（P0 多模态）
+            image_urls: dict[str, str] = {}
+            for img in images:
+                base = img["ref_name"].replace("\\", "/").split("/")[-1]
+                img_obj = f"images/{md5}/{base}"
+                minio_client.put_object(
+                    BUCKET,
+                    img_obj,
+                    io.BytesIO(img["data"]),
+                    len(img["data"]),
+                    content_type=img["mime"],
+                )
+                url = minio_client.presigned_get_object(BUCKET, img_obj, expires=timedelta(days=7))
+                image_urls[img["ref_name"].replace("\\", "/")] = url
+                logger.info(f"图片入库: {base} -> {url[:80]}...")
+            for ref, url in image_urls.items():
+                parsed = re.sub(rf"!\[[^\]]*\]\(\s*{re.escape(ref)}\s*\)", f"![图片]({url})", parsed)
+
+            pieces = split_text(parsed)
+            print(f"[PDF任务] 分片数: {len(pieces)}")
+            chunk_data = [{"text": p, "chunk_type": "text", "source_type": "pdf"} for p in pieces]
+            # 图片块（P1 图注索引）：每张图片生成视觉描述 → image_caption 块
+            for img in images:
+                ref = img["ref_name"].replace("\\", "/")
+                base = ref.split("/")[-1]
+                caption = describe_image(img["data"], img["mime"])
+                if caption:
+                    text = caption
+                else:
+                    text = f"[图片图表] {base}（视觉描述未生成，可查看原图）"
+                    logger.warning(f"图注生成失败，写入占位块: {base}")
+                chunk_data.append(
+                    {
+                        "text": text,
+                        "chunk_type": "image_caption",
+                        "source_type": "pdf",
+                        "resource_url": image_urls.get(ref),
+                    }
+                )
+            texts = [c["text"] for c in chunk_data]
+            embeddings = embed_texts(texts)
             doc = Document(
                 title=filename,
                 category=category,
@@ -460,6 +506,7 @@ async def upload_async(
                         chunk_type=c["chunk_type"],
                         source_type=c["source_type"],
                         content=c["text"],
+                        resource_url=c.get("resource_url"),
                         embedding=emb,
                         tsv=build_tsv(c["text"]),
                         model_version="bge-m3-v1",
@@ -491,7 +538,9 @@ async def upload_async(
         finally:
             db2.close()
 
-    threading.Thread(target=bg_task, daemon=True).start()
+    from app.core.pool import bg_pool
+
+    bg_pool().submit(bg_task)  # 应用级池执行 PDF 解析（解析+embedding 长任务，低频）
     return {"task_id": task_id, "status": "pending"}
 
 
@@ -507,10 +556,38 @@ def task_status(task_id: str, db: Session = Depends(get_db)):
     return {"status": row[0], "chunks": row[1], "error": row[2]}
 
 
+@router.post("/upload-images")
+async def upload_images(
+    files: list[UploadFile] = File(...),
+    admin: User = Depends(require_admin),
+):
+    """md/txt 附带图片上传：存 MinIO + 返回 presigned URL 映射（按 basename 匹配 md 引用）"""
+    result = []
+    for f in files:
+        data = await f.read()
+        if not data:
+            continue
+        md5_img = hashlib.md5(data).hexdigest()
+        base = f.filename.replace("\\", "/").split("/")[-1]
+        img_obj = f"images/{md5_img}/{base}"
+        minio_client.put_object(
+            BUCKET,
+            img_obj,
+            io.BytesIO(data),
+            len(data),
+            content_type=f.content_type or "image/png",
+        )
+        url = minio_client.presigned_get_object(BUCKET, img_obj, expires=timedelta(days=7))
+        result.append({"ref_name": base, "url": url})
+        logger.info(f"图片附件入库: {base} -> {url[:80]}...")
+    return {"images": result}
+
+
 @router.post("/upload")
 async def upload_document(
     file: UploadFile = File(...),
     category: str = None,
+    image_urls: str = Form(None),
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -519,11 +596,21 @@ async def upload_document(
     content = await file.read()
     filename = file.filename
 
-    # MD5 去重
+    # MD5 去重：active 命中则已存在；软删命中则复活（释放唯一键占用，重传即恢复）
     md5 = hashlib.md5(content).hexdigest()
-    exists = db.query(Document).filter(Document.md5_hash == md5).first()
+    exists = db.query(Document).filter(Document.md5_hash == md5, Document.is_deleted == False).first()
     if exists:
         return {"status": "exists", "doc_id": str(exists.id)}
+    soft = db.query(Document).filter(Document.md5_hash == md5, Document.is_deleted == True).first()
+    if soft:
+        soft.is_deleted = False
+        soft.deleted_at = None
+        db.query(Chunk).filter(Chunk.doc_id == soft.id).update({"is_deleted": False})
+        _audit(db, user_id, "restore_document", str(soft.id), {"title": filename, "source": "restore"})
+        db.commit()
+        logger.info(f"复活软删文档: {soft.id} title={soft.title}")
+        chunk_count = db.query(Chunk).filter(Chunk.doc_id == soft.id, Chunk.is_deleted == False).count()
+        return {"status": "ok", "doc_id": str(soft.id), "chunks": chunk_count, "restored": True}
 
     # 按文件类型解析
     if filename.endswith(".pdf"):
@@ -546,7 +633,27 @@ async def upload_document(
         source = "jupyter"
     else:
         text = content.decode("utf-8", errors="ignore")
-        pieces = split_text(text)
+        # md/txt 携带图片附件：按 basename 匹配引用并替换为 presigned URL（预览可见）
+        if image_urls:
+            try:
+                for img_map in json.loads(image_urls):
+                    base = (img_map.get("ref_name") or "").replace("\\", "/").split("/")[-1]
+                    url = img_map.get("url") or ""
+                    if base and url:
+                        text = re.sub(
+                            rf"!\[[^\]]*\]\([^)]*{re.escape(base)}\)",
+                            f"![图片]({url})",
+                            text,
+                        )
+            except Exception as e:
+                logger.warning(f"图片引用替换失败: {e}")
+        # 分块前剥离 base64 data URL（无语义数据不进知识库/embedding，防超长序列 OOM；MinIO 仍存完整文本供预览）
+        text_for_chunk = re.sub(
+            r"data:image/[a-zA-Z0-9.+/]+;base64,[A-Za-z0-9+/=\s]+",
+            "![图片](data-url)",
+            text,
+        )
+        pieces = split_text(text_for_chunk)
         chunk_data = [{"text": p, "chunk_type": "text", "source_type": "markdown"} for p in pieces]
         source = "markdown" if filename.endswith(".md") else "text"
 
@@ -557,13 +664,14 @@ async def upload_document(
     texts = [c["text"] for c in chunk_data]
     embeddings = embed_texts(texts)
 
-    # 上传到 MinIO
+    # 上传到 MinIO（md/txt 存替换图片引用后的文本，保证预览与入库一致）
     object_name = f"{md5}/{filename}"
+    store_bytes = text.encode("utf-8") if source in ("markdown", "text") else content
     minio_client.put_object(
         BUCKET,
         object_name,
-        io.BytesIO(content),
-        len(content),
+        io.BytesIO(store_bytes),
+        len(store_bytes),
         content_type=file.content_type or "application/octet-stream",
     )
 
